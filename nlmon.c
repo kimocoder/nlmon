@@ -105,6 +105,8 @@ static int filter_msg_type = -1;  /* -1 means no filter */
 static int show_generic_netlink = 0;
 static int show_all_protocols = 0;
 
+#define MAX_NETLINK_PACKET_SIZE 65536
+
 /* PCAP file format structures */
 struct pcap_file_header {
 	uint32_t magic_number;   /* magic number */
@@ -158,7 +160,7 @@ static void log_event(const char *msg)
 static int create_nlmon_device(const char *dev_name)
 {
 	struct nl_sock *sk;
-	struct rtnl_link *link;
+	struct rtnl_link *link = NULL;
 	int err;
 	
 	/* Validate device name to prevent injection */
@@ -189,11 +191,11 @@ static int create_nlmon_device(const char *dev_name)
 	}
 	
 	/* Check if device already exists */
-	struct rtnl_link *result = NULL;
-	err = rtnl_link_get_kernel(sk, 0, dev_name, &result);
-	if (err == 0 && result) {
-		/* Device exists, just set it up */
-		link = result;
+	struct rtnl_link *existing_link = NULL;
+	err = rtnl_link_get_kernel(sk, 0, dev_name, &existing_link);
+	if (err == 0 && existing_link) {
+		/* Device exists, use it */
+		link = existing_link;
 		if (verbose_mode)
 			log_event("nlmon device already exists");
 	} else {
@@ -217,13 +219,12 @@ static int create_nlmon_device(const char *dev_name)
 		}
 		
 		rtnl_link_put(link);
+		link = NULL;
 		
 		if (verbose_mode)
 			log_event("Created nlmon device");
-	}
-	
-	/* Get the link to set it up */
-	if (!link) {
+		
+		/* Get the newly created link */
 		err = rtnl_link_get_kernel(sk, 0, dev_name, &link);
 		if (err < 0 || !link) {
 			warnx("Failed to get link for device %s: %s", dev_name, nl_geterror(err));
@@ -374,7 +375,7 @@ static void write_pcap_packet(const unsigned char *data, size_t len)
 
 static void nlmon_packet_cb(struct ev_loop *loop, ev_io *w, int revents)
 {
-	unsigned char buffer[65536];
+	unsigned char buffer[MAX_NETLINK_PACKET_SIZE];
 	ssize_t len;
 	struct nlmsghdr *nlh;
 	char msg[512];
