@@ -24,7 +24,9 @@
  */
 
 #include <assert.h>
+#include <ctype.h>
 #include <err.h>
+#include <errno.h>
 #include <ev.h>
 #include <getopt.h>
 #include <stdio.h>
@@ -34,29 +36,28 @@
 #include <ncurses.h>
 #include <pthread.h>
 #include <unistd.h>
+#include <fcntl.h>
+#include <sys/time.h>
+#include <sys/socket.h>
+#include <sys/ioctl.h>
+#include <arpa/inet.h>
 
 /* <linux/if.h>/<net/if.h> can NOT co-exist! */
 #define _LINUX_IF_H
-/* RFC 2863 operational status */
-enum {
-	IF_OPER_UNKNOWN,
-	IF_OPER_NOTPRESENT,
-	IF_OPER_DOWN,
-	IF_OPER_LOWERLAYERDOWN,
-	IF_OPER_TESTING,
-	IF_OPER_DORMANT,
-	IF_OPER_UP,
-};
+#include <linux/if_packet.h>
+#include <linux/if_ether.h>
 
 #include <net/if.h>
 
 #include <netlink/netlink.h>
+#include <netlink/msg.h>
 #include <netlink/route/link.h>
 #include <netlink/route/link/veth.h>
 #include <netlink/route/route.h>
 #include <netlink/route/addr.h>
 #include <netlink/route/neighbour.h>
 #include <netlink/route/rule.h>
+#include <linux/netlink.h>
 
 /* CLI mode globals */
 static int cli_mode = 0;
@@ -95,6 +96,36 @@ static int veth_only;
 static int monitor_addr = 1;
 static int monitor_neigh = 1;
 static int monitor_rules = 1;
+static int use_nlmon = 0;
+static char *nlmon_device = NULL;
+static char *pcap_file = NULL;
+static int verbose_mode = 0;
+static int nlmon_sock = -1;
+static int filter_msg_type = -1;  /* -1 means no filter */
+static int show_generic_netlink = 0;
+static int show_all_protocols = 0;
+
+#define MAX_NETLINK_PACKET_SIZE 65536
+
+/* PCAP file format structures */
+struct pcap_file_header {
+	uint32_t magic_number;   /* magic number */
+	uint16_t version_major;  /* major version number */
+	uint16_t version_minor;  /* minor version number */
+	int32_t  thiszone;       /* GMT to local correction */
+	uint32_t sigfigs;        /* accuracy of timestamps */
+	uint32_t snaplen;        /* max length of captured packets, in octets */
+	uint32_t network;        /* data link type */
+};
+
+struct pcap_packet_header {
+	uint32_t ts_sec;         /* timestamp seconds */
+	uint32_t ts_usec;        /* timestamp microseconds */
+	uint32_t incl_len;       /* number of octets of packet saved in file */
+	uint32_t orig_len;       /* actual length of packet */
+};
+
+static FILE *pcap_fp = NULL;
 
 static void log_event(const char *msg)
 {
@@ -122,6 +153,300 @@ static void log_event(const char *msg)
 		pthread_mutex_unlock(&screen_mutex);
 	} else {
 		warnx("%s", msg);
+	}
+}
+
+/* nlmon device management */
+static int create_nlmon_device(const char *dev_name)
+{
+	struct nl_sock *sk;
+	struct rtnl_link *link = NULL;
+	int err;
+	
+	/* Validate device name to prevent injection */
+	if (!dev_name || strlen(dev_name) == 0 || strlen(dev_name) >= IFNAMSIZ) {
+		warnx("Invalid device name");
+		return -1;
+	}
+	
+	/* Check for invalid characters */
+	for (const char *p = dev_name; *p; p++) {
+		if (!isalnum(*p) && *p != '_' && *p != '-') {
+			warnx("Invalid character in device name: '%c'", *p);
+			return -1;
+		}
+	}
+	
+	sk = nl_socket_alloc();
+	if (!sk) {
+		warnx("Failed to allocate netlink socket");
+		return -1;
+	}
+	
+	err = nl_connect(sk, NETLINK_ROUTE);
+	if (err < 0) {
+		warnx("Failed to connect to netlink: %s", nl_geterror(err));
+		nl_socket_free(sk);
+		return -1;
+	}
+	
+	/* Check if device already exists */
+	struct rtnl_link *existing_link = NULL;
+	err = rtnl_link_get_kernel(sk, 0, dev_name, &existing_link);
+	if (err == 0 && existing_link) {
+		/* Device exists, use it */
+		link = existing_link;
+		if (verbose_mode)
+			log_event("nlmon device already exists");
+	} else {
+		/* Create nlmon device using netlink */
+		link = rtnl_link_alloc();
+		if (!link) {
+			warnx("Failed to allocate link object");
+			nl_socket_free(sk);
+			return -1;
+		}
+		
+		rtnl_link_set_name(link, dev_name);
+		rtnl_link_set_type(link, "nlmon");
+		
+		err = rtnl_link_add(sk, link, NLM_F_CREATE | NLM_F_EXCL);
+		if (err < 0) {
+			warnx("Failed to create nlmon device: %s", nl_geterror(err));
+			rtnl_link_put(link);
+			nl_socket_free(sk);
+			return -1;
+		}
+		
+		rtnl_link_put(link);
+		link = NULL;
+		
+		if (verbose_mode)
+			log_event("Created nlmon device");
+		
+		/* Get the newly created link */
+		err = rtnl_link_get_kernel(sk, 0, dev_name, &link);
+		if (err < 0 || !link) {
+			warnx("Failed to get link for device %s: %s", dev_name, nl_geterror(err));
+			nl_socket_free(sk);
+			return -1;
+		}
+	}
+	
+	/* Set device UP */
+	struct rtnl_link *change = rtnl_link_alloc();
+	if (!change) {
+		warnx("Failed to allocate change object");
+		rtnl_link_put(link);
+		nl_socket_free(sk);
+		return -1;
+	}
+	
+	rtnl_link_set_flags(change, IFF_UP);
+	
+	err = rtnl_link_change(sk, link, change, 0);
+	if (err < 0) {
+		warnx("Failed to bring up nlmon device: %s", nl_geterror(err));
+		rtnl_link_put(change);
+		rtnl_link_put(link);
+		nl_socket_free(sk);
+		return -1;
+	}
+	
+	rtnl_link_put(change);
+	rtnl_link_put(link);
+	nl_socket_free(sk);
+	
+	if (verbose_mode)
+		log_event("nlmon device is up");
+	
+	return 0;
+}
+
+static int bind_nlmon_socket(const char *dev_name)
+{
+	struct sockaddr_ll sll;
+	struct ifreq ifr;
+	int sock;
+	
+	/* Create raw socket */
+	sock = socket(AF_PACKET, SOCK_RAW, htons(ETH_P_ALL));
+	if (sock < 0) {
+		warn("Failed to create raw socket");
+		return -1;
+	}
+	
+	/* Get interface index */
+	memset(&ifr, 0, sizeof(ifr));
+	strncpy(ifr.ifr_name, dev_name, IFNAMSIZ - 1);
+	ifr.ifr_name[IFNAMSIZ - 1] = '\0';
+	if (ioctl(sock, SIOCGIFINDEX, &ifr) < 0) {
+		warn("Failed to get interface index for %s", dev_name);
+		close(sock);
+		return -1;
+	}
+	
+	/* Bind to nlmon device */
+	memset(&sll, 0, sizeof(sll));
+	sll.sll_family = AF_PACKET;
+	sll.sll_ifindex = ifr.ifr_ifindex;
+	sll.sll_protocol = htons(ETH_P_ALL);
+	
+	if (bind(sock, (struct sockaddr *)&sll, sizeof(sll)) < 0) {
+		warn("Failed to bind to nlmon device %s", dev_name);
+		close(sock);
+		return -1;
+	}
+	
+	if (verbose_mode) {
+		char msg[256];
+		snprintf(msg, sizeof(msg), "Bound to nlmon device %s (ifindex=%d)", 
+		         dev_name, ifr.ifr_ifindex);
+		log_event(msg);
+	}
+	
+	return sock;
+}
+
+static int init_pcap_file(const char *filename)
+{
+	struct pcap_file_header fh;
+	
+	pcap_fp = fopen(filename, "wb");
+	if (!pcap_fp) {
+		warn("Failed to open pcap file %s", filename);
+		return -1;
+	}
+	
+	/* Write PCAP file header */
+	fh.magic_number = 0xa1b2c3d4;
+	fh.version_major = 2;
+	fh.version_minor = 4;
+	fh.thiszone = 0;
+	fh.sigfigs = 0;
+	fh.snaplen = 65535;
+	fh.network = 253;  /* DLT_NETLINK for netlink messages */
+	
+	if (fwrite(&fh, sizeof(fh), 1, pcap_fp) != 1) {
+		warn("Failed to write pcap header");
+		fclose(pcap_fp);
+		pcap_fp = NULL;
+		return -1;
+	}
+	
+	fflush(pcap_fp);
+	
+	if (verbose_mode) {
+		char msg[256];
+		snprintf(msg, sizeof(msg), "Writing netlink packets to %s", filename);
+		log_event(msg);
+	}
+	
+	return 0;
+}
+
+static void write_pcap_packet(const unsigned char *data, size_t len)
+{
+	struct pcap_packet_header ph;
+	struct timeval tv;
+	
+	if (!pcap_fp)
+		return;
+	
+	gettimeofday(&tv, NULL);
+	
+	ph.ts_sec = tv.tv_sec;
+	ph.ts_usec = tv.tv_usec;
+	ph.incl_len = len;
+	ph.orig_len = len;
+	
+	if (fwrite(&ph, sizeof(ph), 1, pcap_fp) != 1) {
+		warn("Failed to write pcap packet header");
+		return;
+	}
+	
+	if (fwrite(data, 1, len, pcap_fp) != len) {
+		warn("Failed to write pcap packet data");
+		return;
+	}
+	
+	fflush(pcap_fp);
+}
+
+static void nlmon_packet_cb(struct ev_loop *loop, ev_io *w, int revents)
+{
+	unsigned char buffer[MAX_NETLINK_PACKET_SIZE];
+	ssize_t len;
+	struct nlmsghdr *nlh;
+	char msg[512];
+	char msg_type_buf[32];
+	static unsigned long packet_count = 0;
+	const char *msg_type_str = "UNKNOWN";
+	
+	len = recv(nlmon_sock, buffer, sizeof(buffer), 0);
+	if (len < 0) {
+		if (errno != EAGAIN && errno != EWOULDBLOCK)
+			warn("Failed to receive from nlmon socket");
+		return;
+	}
+	
+	if (len == 0)
+		return;
+	
+	packet_count++;
+	
+	/* Parse netlink message */
+	if (len >= (ssize_t)sizeof(struct nlmsghdr)) {
+		nlh = (struct nlmsghdr *)buffer;
+		
+		/* Apply message type filter if set */
+		if (filter_msg_type >= 0 && nlh->nlmsg_type != (unsigned)filter_msg_type)
+			return;
+		
+		/* Determine message type description */
+		switch (nlh->nlmsg_type) {
+		case 0: msg_type_str = "NLMSG_NOOP"; break;
+		case 1: msg_type_str = "NLMSG_ERROR"; break;
+		case 2: msg_type_str = "NLMSG_DONE"; break;
+		case 3: msg_type_str = "NLMSG_OVERRUN"; break;
+		case 16: msg_type_str = "RTM_NEWLINK"; break;
+		case 17: msg_type_str = "RTM_DELLINK"; break;
+		case 18: msg_type_str = "RTM_GETLINK"; break;
+		case 19: msg_type_str = "RTM_SETLINK"; break;
+		case 20: msg_type_str = "RTM_NEWADDR"; break;
+		case 21: msg_type_str = "RTM_DELADDR"; break;
+		case 22: msg_type_str = "RTM_GETADDR"; break;
+		case 24: msg_type_str = "RTM_NEWROUTE"; break;
+		case 25: msg_type_str = "RTM_DELROUTE"; break;
+		case 26: msg_type_str = "RTM_GETROUTE"; break;
+		case 28: msg_type_str = "RTM_NEWNEIGH"; break;
+		case 29: msg_type_str = "RTM_DELNEIGH"; break;
+		case 30: msg_type_str = "RTM_GETNEIGH"; break;
+		case 32: msg_type_str = "RTM_NEWRULE"; break;
+		case 33: msg_type_str = "RTM_DELRULE"; break;
+		case 34: msg_type_str = "RTM_GETRULE"; break;
+		default:
+			if (nlh->nlmsg_type >= 16)
+				snprintf(msg_type_buf, sizeof(msg_type_buf), "RTM_%u", nlh->nlmsg_type);
+			else
+				snprintf(msg_type_buf, sizeof(msg_type_buf), "TYPE_%u", nlh->nlmsg_type);
+			msg_type_str = msg_type_buf;
+			break;
+		}
+	}
+	
+	/* Write to PCAP file if enabled */
+	if (pcap_fp)
+		write_pcap_packet(buffer, len);
+	
+	/* Log netlink message if verbose */
+	if (verbose_mode && len >= (ssize_t)sizeof(struct nlmsghdr)) {
+		nlh = (struct nlmsghdr *)buffer;
+		snprintf(msg, sizeof(msg), 
+		         "nlmon: pkt #%lu, len=%zd, %s, flags=0x%x, seq=%u, pid=%u",
+		         packet_count, len, msg_type_str, nlh->nlmsg_flags, 
+		         nlh->nlmsg_seq, nlh->nlmsg_pid);
+		log_event(msg);
 	}
 }
 
@@ -649,7 +974,7 @@ err_free_mngr:
 
 static int usage(int rc)
 {
-	printf("Usage: nlmon [-h?vcia]\n"
+	printf("Usage: nlmon [-h?vciau] [-m device] [-p file] [-V] [-f type] [-g]\n"
 	       "\n"
 	       "Options:\n"
 	       "  -h    This help text\n"
@@ -658,6 +983,29 @@ static int usage(int rc)
 	       "  -i    Disable address monitoring\n"
 	       "  -a    Disable neighbor/ARP monitoring\n"
 	       "  -u    Disable rules monitoring\n"
+	       "  -m    Bind to nlmon device (e.g., -m nlmon0) for raw packet capture\n"
+	       "  -p    Write captured netlink packets to PCAP file (requires -m)\n"
+	       "  -V    Verbose mode - show detailed netlink message information\n"
+	       "  -f    Filter by netlink message type (e.g., -f 16 for RTM_NEWLINK)\n"
+	       "  -g    Enable NETLINK_GENERIC protocol monitoring\n"
+	       "  -A    Monitor all netlink protocols (not just NETLINK_ROUTE)\n"
+	       "\n"
+	       "nlmon Kernel Module Support:\n"
+	       "  The -m option enables binding to a virtual nlmon network device to capture\n"
+	       "  all netlink messages as raw packets. This requires the nlmon kernel module.\n"
+	       "  \n"
+	       "  Example: nlmon -m nlmon0 -p netlink.pcap -V\n"
+	       "  Example: nlmon -m nlmon0 -V -f 16  # Filter only RTM_NEWLINK messages\n"
+	       "  \n"
+	       "  To manually create an nlmon device:\n"
+	       "    sudo modprobe nlmon\n"
+	       "    sudo ip link add nlmon0 type nlmon\n"
+	       "    sudo ip link set nlmon0 up\n"
+	       "\n"
+	       "Common Message Types:\n"
+	       "  RTM_NEWLINK=16, RTM_DELLINK=17, RTM_NEWADDR=20, RTM_DELADDR=21\n"
+	       "  RTM_NEWROUTE=24, RTM_DELROUTE=25, RTM_NEWNEIGH=28, RTM_DELNEIGH=29\n"
+	       "  RTM_NEWRULE=32, RTM_DELRULE=33\n"
 	       "\n"
 	       "CLI Mode Keys:\n"
 	       "  q       Quit\n"
@@ -679,6 +1027,7 @@ int main(int argc, char *argv[])
 	ev_signal intw;
 	ev_signal hupw;
 	ev_io io;
+	ev_io nlmon_io;
 	ev_timer cli_timer;
 	int err;
 	int fd;
@@ -687,7 +1036,7 @@ int main(int argc, char *argv[])
 	/* Initialize context */
 	memset(&ctx, 0, sizeof(ctx));
 
-	while ((c = getopt(argc, argv, "h?vciau")) != EOF) {
+	while ((c = getopt(argc, argv, "h?vciauVm:p:f:gA")) != EOF) {
 		switch (c) {
 		case 'h':
 		case '?':
@@ -712,9 +1061,73 @@ int main(int argc, char *argv[])
 		case 'u':
 			monitor_rules = 0;
 			break;
+			
+		case 'V':
+			verbose_mode = 1;
+			break;
+			
+		case 'm':
+			use_nlmon = 1;
+			nlmon_device = optarg;
+			break;
+			
+		case 'p':
+			pcap_file = optarg;
+			break;
+			
+		case 'f':
+			{
+				char *endptr;
+				long val = strtol(optarg, &endptr, 10);
+				if (*endptr != '\0' || val < 0 || val > 65535) {
+					warnx("Invalid message type filter: %s", optarg);
+					return usage(1);
+				}
+				filter_msg_type = (int)val;
+			}
+			break;
+			
+		case 'g':
+			show_generic_netlink = 1;
+			break;
+			
+		case 'A':
+			show_all_protocols = 1;
+			break;
 
 		default:
 			return usage(1);
+		}
+	}
+	
+	/* Validate options */
+	if (pcap_file && !use_nlmon) {
+		warnx("PCAP file output (-p) requires nlmon device (-m)");
+		return usage(1);
+	}
+	
+	/* Setup nlmon if requested */
+	if (use_nlmon) {
+		if (!nlmon_device)
+			nlmon_device = "nlmon0";
+		
+		if (create_nlmon_device(nlmon_device) < 0) {
+			warnx("Failed to setup nlmon device, continuing without it");
+			use_nlmon = 0;
+		} else {
+			nlmon_sock = bind_nlmon_socket(nlmon_device);
+			if (nlmon_sock < 0) {
+				warnx("Failed to bind to nlmon device, continuing without it");
+				use_nlmon = 0;
+			}
+		}
+		
+		/* Setup PCAP file if requested */
+		if (use_nlmon && pcap_file) {
+			if (init_pcap_file(pcap_file) < 0) {
+				warnx("Failed to initialize PCAP file");
+				pcap_file = NULL;
+			}
 		}
 	}
 
@@ -760,12 +1173,24 @@ int main(int argc, char *argv[])
 		ev_timer_init(&cli_timer, cli_update_cb, 0.0, 0.1);
 		ev_timer_start(loop, &cli_timer);
 	}
+	
+	/* Initialize nlmon watcher if enabled */
+	if (use_nlmon && nlmon_sock >= 0) {
+		ev_io_init(&nlmon_io, nlmon_packet_cb, nlmon_sock, EV_READ);
+		ev_io_start(loop, &nlmon_io);
+	}
 
 	/* Start event loop, remain there until ev_unloop() is called. */
 	ev_run(loop, 0);
 
 	nl_cache_mngr_free(ctx.mngr);
 	nl_socket_free(ctx.ns);
+	
+	/* Cleanup nlmon resources */
+	if (nlmon_sock >= 0)
+		close(nlmon_sock);
+	if (pcap_fp)
+		fclose(pcap_fp);
 
 	return 0;
 }

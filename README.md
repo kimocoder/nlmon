@@ -3,7 +3,8 @@ nlmon
 
 Simple example of how to use libnl and libev to monitor kernel netlink
 events.  Enhanced with support for multiple NETLINK features and an optional
-interactive CLI interface.
+interactive CLI interface. Now includes support for the nlmon kernel module
+for raw netlink packet capture and analysis.
 
 Features
 --------
@@ -18,6 +19,11 @@ Features
 * Event statistics tracking
 * Scrollable event history in CLI mode
 * Runtime toggling of monitoring features
+* **NEW:** nlmon kernel module support for raw packet capture
+* **NEW:** PCAP file writing for Wireshark analysis
+* **NEW:** Verbose mode with detailed netlink message inspection
+* **NEW:** Message type filtering for focused monitoring
+* **NEW:** Support for multiple netlink protocol families
 
 
 Building
@@ -63,6 +69,27 @@ Disable specific monitoring:
 Combine options:
 
     ./nlmon -c -v  # CLI mode, VETH interfaces only
+
+**NEW: nlmon Kernel Module Support**
+
+Capture all netlink messages using the nlmon kernel module:
+
+    sudo modprobe nlmon
+    sudo ip link add nlmon0 type nlmon
+    sudo ip link set nlmon0 up
+    sudo ./nlmon -m nlmon0 -V
+
+Write captured netlink traffic to PCAP file for Wireshark:
+
+    sudo ./nlmon -m nlmon0 -p netlink.pcap
+
+Filter by specific message type (e.g., only link changes):
+
+    sudo ./nlmon -m nlmon0 -V -f 16  # RTM_NEWLINK only
+
+Verbose mode with detailed message information:
+
+    ./nlmon -V
 
 
 CLI Mode Commands
@@ -143,6 +170,53 @@ Monitored NETLINK Features
 * **RULE** - Routing rule changes (RTM_NEWRULE, RTM_DELRULE)
   - Policy routing rule modifications
 
+* **nlmon RAW CAPTURE** - When using -m option (requires nlmon kernel module)
+  - Captures ALL netlink messages as raw packets
+  - Supports writing to PCAP format for Wireshark analysis
+  - Message type filtering available
+  - Detailed message inspection in verbose mode
+
+
+nlmon Kernel Module Details
+----------------------------
+
+The nlmon kernel module creates a virtual network device that mirrors all 
+netlink messages exchanged between the kernel and userspace. This enables:
+
+1. **Complete Netlink Visibility**: Capture messages from ALL netlink protocols,
+   not just NETLINK_ROUTE (including NETLINK_GENERIC, NETLINK_SOCK_DIAG, etc.)
+
+2. **PCAP Export**: Write captured traffic to standard PCAP format files that
+   can be analyzed with Wireshark or other packet analysis tools
+
+3. **Message Filtering**: Filter by specific message types to focus on 
+   particular events of interest
+
+4. **Protocol Analysis**: Detailed inspection of netlink message headers,
+   flags, sequence numbers, and payload data
+
+To use the nlmon capture feature:
+
+```bash
+# Load the nlmon kernel module (if available)
+sudo modprobe nlmon
+
+# Create an nlmon device
+sudo ip link add nlmon0 type nlmon
+sudo ip link set nlmon0 up
+
+# Run nlmon with capture enabled
+sudo ./nlmon -m nlmon0 -V -p capture.pcap
+
+# In another terminal, trigger netlink events
+sudo ip link add dummy0 type dummy
+sudo ip addr add 192.168.1.1/24 dev dummy0
+sudo ip link set dummy0 up
+
+# View in Wireshark or analyze the PCAP file
+wireshark capture.pcap
+```
+
 
 Origin & References
 -------------------
@@ -156,6 +230,43 @@ to utilize libnl and libev.
 
 Enhanced with additional NETLINK features and interactive CLI by the
 community.
+
+Enhanced with nlmon kernel module support, PCAP capture, and advanced
+filtering capabilities for comprehensive netlink monitoring and analysis.
+
+
+Improvements & Enhancements
+---------------------------
+
+Recent enhancements include:
+
+1. **nlmon Kernel Module Integration**
+   - Bind to nlmon virtual devices for complete netlink visibility
+   - Capture ALL netlink messages, not just NETLINK_ROUTE
+   - Support for raw packet capture at the netlink protocol layer
+
+2. **PCAP File Export**
+   - Write captured netlink traffic to standard PCAP format
+   - Compatible with Wireshark and other packet analysis tools
+   - Uses DLT_NETLINK (253) data link type
+
+3. **Message Filtering**
+   - Filter by specific netlink message types
+   - Focus on particular events of interest
+   - Reduce noise in high-traffic scenarios
+
+4. **Verbose Mode**
+   - Detailed message inspection with decoded types
+   - Message header analysis (flags, sequence, PID)
+   - Human-readable message type names
+
+5. **Enhanced Documentation**
+   - Comprehensive usage examples (see EXAMPLES.md)
+   - Debugging scenarios and troubleshooting
+   - Integration examples (systemd, Docker)
+
+See [EXAMPLES.md](EXAMPLES.md) for detailed usage examples and scenarios.
+
 
 [finit]:          https://github.com/troglobit/finit
 [Joachim Wiberg]: http://troglobit.com
