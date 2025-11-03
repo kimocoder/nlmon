@@ -231,5 +231,42 @@ to utilize libnl and libev.
 Enhanced with additional NETLINK features and interactive CLI by the
 community.
 
+Enhanced with nlmon kernel module support, PCAP capture, and advanced
+filtering capabilities for comprehensive netlink monitoring and analysis.
+
+
+Improvements & Enhancements
+---------------------------
+
+Recent enhancements include:
+
+1. **nlmon Kernel Module Integration**
+   - Bind to nlmon virtual devices for complete netlink visibility
+   - Capture ALL netlink messages, not just NETLINK_ROUTE
+   - Support for raw packet capture at the netlink protocol layer
+
+2. **PCAP File Export**
+   - Write captured netlink traffic to standard PCAP format
+   - Compatible with Wireshark and other packet analysis tools
+   - Uses DLT_NETLINK (253) data link type
+
+3. **Message Filtering**
+   - Filter by specific netlink message types
+   - Focus on particular events of interest
+   - Reduce noise in high-traffic scenarios
+
+4. **Verbose Mode**
+   - Detailed message inspection with decoded types
+   - Message header analysis (flags, sequence, PID)
+   - Human-readable message type names
+
+5. **Enhanced Documentation**
+   - Comprehensive usage examples (see EXAMPLES.md)
+   - Debugging scenarios and troubleshooting
+   - Integration examples (systemd, Docker)
+
+See [EXAMPLES.md](EXAMPLES.md) for detailed usage examples and scenarios.
+
+
 [finit]:          https://github.com/troglobit/finit
 [Joachim Wiberg]: http://troglobit.com
