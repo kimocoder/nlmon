@@ -85,6 +85,7 @@ static struct stats event_stats = {0};
 
 struct context {
 	struct nl_sock        *ns;
+	struct nl_sock        *ns_generic;  /* For NETLINK_GENERIC */
 	struct nl_cache_mngr  *mngr;
 	struct nl_cache       *lcache;
 	struct nl_cache       *rcache;
@@ -102,6 +103,9 @@ static char *nlmon_device = NULL;
 static char *pcap_file = NULL;
 static int verbose_mode = 0;
 static int nlmon_sock = -1;
+static int filter_msg_type = -1;  /* -1 means no filter */
+static int show_generic_netlink = 0;
+static int show_all_protocols = 0;
 
 /* PCAP file format structures */
 struct pcap_file_header {
@@ -304,6 +308,7 @@ static void nlmon_packet_cb(struct ev_loop *loop, ev_io *w, int revents)
 	struct nlmsghdr *nlh;
 	char msg[512];
 	static unsigned long packet_count = 0;
+	const char *msg_type_str = "UNKNOWN";
 	
 	len = recv(nlmon_sock, buffer, sizeof(buffer), 0);
 	if (len < 0) {
@@ -317,16 +322,56 @@ static void nlmon_packet_cb(struct ev_loop *loop, ev_io *w, int revents)
 	
 	packet_count++;
 	
+	/* Parse netlink message */
+	if (len >= (ssize_t)sizeof(struct nlmsghdr)) {
+		nlh = (struct nlmsghdr *)buffer;
+		
+		/* Apply message type filter if set */
+		if (filter_msg_type >= 0 && nlh->nlmsg_type != (unsigned)filter_msg_type)
+			return;
+		
+		/* Determine message type description */
+		switch (nlh->nlmsg_type) {
+		case 0: msg_type_str = "NLMSG_NOOP"; break;
+		case 1: msg_type_str = "NLMSG_ERROR"; break;
+		case 2: msg_type_str = "NLMSG_DONE"; break;
+		case 3: msg_type_str = "NLMSG_OVERRUN"; break;
+		case 16: msg_type_str = "RTM_NEWLINK"; break;
+		case 17: msg_type_str = "RTM_DELLINK"; break;
+		case 18: msg_type_str = "RTM_GETLINK"; break;
+		case 19: msg_type_str = "RTM_SETLINK"; break;
+		case 20: msg_type_str = "RTM_NEWADDR"; break;
+		case 21: msg_type_str = "RTM_DELADDR"; break;
+		case 22: msg_type_str = "RTM_GETADDR"; break;
+		case 24: msg_type_str = "RTM_NEWROUTE"; break;
+		case 25: msg_type_str = "RTM_DELROUTE"; break;
+		case 26: msg_type_str = "RTM_GETROUTE"; break;
+		case 28: msg_type_str = "RTM_NEWNEIGH"; break;
+		case 29: msg_type_str = "RTM_DELNEIGH"; break;
+		case 30: msg_type_str = "RTM_GETNEIGH"; break;
+		case 32: msg_type_str = "RTM_NEWRULE"; break;
+		case 33: msg_type_str = "RTM_DELRULE"; break;
+		case 34: msg_type_str = "RTM_GETRULE"; break;
+		default:
+			if (nlh->nlmsg_type >= 16)
+				snprintf(msg, sizeof(msg), "RTM_%u", nlh->nlmsg_type);
+			else
+				snprintf(msg, sizeof(msg), "TYPE_%u", nlh->nlmsg_type);
+			msg_type_str = msg;
+			break;
+		}
+	}
+	
 	/* Write to PCAP file if enabled */
 	if (pcap_fp)
 		write_pcap_packet(buffer, len);
 	
-	/* Parse and log netlink message if verbose */
+	/* Log netlink message if verbose */
 	if (verbose_mode && len >= (ssize_t)sizeof(struct nlmsghdr)) {
 		nlh = (struct nlmsghdr *)buffer;
 		snprintf(msg, sizeof(msg), 
-		         "nlmon: packet #%lu, len=%zd, type=%u, flags=0x%x, seq=%u, pid=%u",
-		         packet_count, len, nlh->nlmsg_type, nlh->nlmsg_flags, 
+		         "nlmon: pkt #%lu, len=%zd, %s, flags=0x%x, seq=%u, pid=%u",
+		         packet_count, len, msg_type_str, nlh->nlmsg_flags, 
 		         nlh->nlmsg_seq, nlh->nlmsg_pid);
 		log_event(msg);
 	}
@@ -856,7 +901,7 @@ err_free_mngr:
 
 static int usage(int rc)
 {
-	printf("Usage: nlmon [-h?vciau] [-m device] [-p file] [-V]\n"
+	printf("Usage: nlmon [-h?vciau] [-m device] [-p file] [-V] [-f type] [-g]\n"
 	       "\n"
 	       "Options:\n"
 	       "  -h    This help text\n"
@@ -868,17 +913,26 @@ static int usage(int rc)
 	       "  -m    Bind to nlmon device (e.g., -m nlmon0) for raw packet capture\n"
 	       "  -p    Write captured netlink packets to PCAP file (requires -m)\n"
 	       "  -V    Verbose mode - show detailed netlink message information\n"
+	       "  -f    Filter by netlink message type (e.g., -f 16 for RTM_NEWLINK)\n"
+	       "  -g    Enable NETLINK_GENERIC protocol monitoring\n"
+	       "  -A    Monitor all netlink protocols (not just NETLINK_ROUTE)\n"
 	       "\n"
 	       "nlmon Kernel Module Support:\n"
 	       "  The -m option enables binding to a virtual nlmon network device to capture\n"
 	       "  all netlink messages as raw packets. This requires the nlmon kernel module.\n"
 	       "  \n"
 	       "  Example: nlmon -m nlmon0 -p netlink.pcap -V\n"
+	       "  Example: nlmon -m nlmon0 -V -f 16  # Filter only RTM_NEWLINK messages\n"
 	       "  \n"
 	       "  To manually create an nlmon device:\n"
 	       "    sudo modprobe nlmon\n"
 	       "    sudo ip link add nlmon0 type nlmon\n"
 	       "    sudo ip link set nlmon0 up\n"
+	       "\n"
+	       "Common Message Types:\n"
+	       "  RTM_NEWLINK=16, RTM_DELLINK=17, RTM_NEWADDR=20, RTM_DELADDR=21\n"
+	       "  RTM_NEWROUTE=24, RTM_DELROUTE=25, RTM_NEWNEIGH=28, RTM_DELNEIGH=29\n"
+	       "  RTM_NEWRULE=32, RTM_DELRULE=33\n"
 	       "\n"
 	       "CLI Mode Keys:\n"
 	       "  q       Quit\n"
@@ -909,7 +963,7 @@ int main(int argc, char *argv[])
 	/* Initialize context */
 	memset(&ctx, 0, sizeof(ctx));
 
-	while ((c = getopt(argc, argv, "h?vciauVm:p:")) != EOF) {
+	while ((c = getopt(argc, argv, "h?vciauVm:p:f:gA")) != EOF) {
 		switch (c) {
 		case 'h':
 		case '?':
@@ -946,6 +1000,18 @@ int main(int argc, char *argv[])
 			
 		case 'p':
 			pcap_file = optarg;
+			break;
+			
+		case 'f':
+			filter_msg_type = atoi(optarg);
+			break;
+			
+		case 'g':
+			show_generic_netlink = 1;
+			break;
+			
+		case 'A':
+			show_all_protocols = 1;
 			break;
 
 		default:
