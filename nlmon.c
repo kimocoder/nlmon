@@ -24,6 +24,7 @@
  */
 
 #include <assert.h>
+#include <ctype.h>
 #include <err.h>
 #include <errno.h>
 #include <ev.h>
@@ -45,8 +46,6 @@
 #define _LINUX_IF_H
 #include <linux/if_packet.h>
 #include <linux/if_ether.h>
-
-#include <net/if.h>
 
 #include <net/if.h>
 
@@ -85,7 +84,6 @@ static struct stats event_stats = {0};
 
 struct context {
 	struct nl_sock        *ns;
-	struct nl_sock        *ns_generic;  /* For NETLINK_GENERIC */
 	struct nl_cache_mngr  *mngr;
 	struct nl_cache       *lcache;
 	struct nl_cache       *rcache;
@@ -159,32 +157,104 @@ static void log_event(const char *msg)
 /* nlmon device management */
 static int create_nlmon_device(const char *dev_name)
 {
-	char cmd[256];
-	int ret;
+	struct nl_sock *sk;
+	struct rtnl_link *link;
+	int err;
 	
-	/* Check if device already exists */
-	snprintf(cmd, sizeof(cmd), "ip link show %s > /dev/null 2>&1", dev_name);
-	ret = system(cmd);
+	/* Validate device name to prevent injection */
+	if (!dev_name || strlen(dev_name) == 0 || strlen(dev_name) >= IFNAMSIZ) {
+		warnx("Invalid device name");
+		return -1;
+	}
 	
-	if (ret != 0) {
-		/* Device doesn't exist, create it */
-		snprintf(cmd, sizeof(cmd), "ip link add %s type nlmon", dev_name);
-		ret = system(cmd);
-		if (ret != 0) {
-			warnx("Failed to create nlmon device %s", dev_name);
+	/* Check for invalid characters */
+	for (const char *p = dev_name; *p; p++) {
+		if (!isalnum(*p) && *p != '_' && *p != '-') {
+			warnx("Invalid character in device name: '%c'", *p);
 			return -1;
 		}
+	}
+	
+	sk = nl_socket_alloc();
+	if (!sk) {
+		warnx("Failed to allocate netlink socket");
+		return -1;
+	}
+	
+	err = nl_connect(sk, NETLINK_ROUTE);
+	if (err < 0) {
+		warnx("Failed to connect to netlink: %s", nl_geterror(err));
+		nl_socket_free(sk);
+		return -1;
+	}
+	
+	/* Check if device already exists */
+	struct rtnl_link *result = NULL;
+	err = rtnl_link_get_kernel(sk, 0, dev_name, &result);
+	if (err == 0 && result) {
+		/* Device exists, just set it up */
+		link = result;
+		if (verbose_mode)
+			log_event("nlmon device already exists");
+	} else {
+		/* Create nlmon device using netlink */
+		link = rtnl_link_alloc();
+		if (!link) {
+			warnx("Failed to allocate link object");
+			nl_socket_free(sk);
+			return -1;
+		}
+		
+		rtnl_link_set_name(link, dev_name);
+		rtnl_link_set_type(link, "nlmon");
+		
+		err = rtnl_link_add(sk, link, NLM_F_CREATE | NLM_F_EXCL);
+		if (err < 0) {
+			warnx("Failed to create nlmon device: %s", nl_geterror(err));
+			rtnl_link_put(link);
+			nl_socket_free(sk);
+			return -1;
+		}
+		
+		rtnl_link_put(link);
+		
 		if (verbose_mode)
 			log_event("Created nlmon device");
 	}
 	
-	/* Bring device up */
-	snprintf(cmd, sizeof(cmd), "ip link set %s up", dev_name);
-	ret = system(cmd);
-	if (ret != 0) {
-		warnx("Failed to bring up nlmon device %s", dev_name);
+	/* Get the link to set it up */
+	if (!link) {
+		err = rtnl_link_get_kernel(sk, 0, dev_name, &link);
+		if (err < 0 || !link) {
+			warnx("Failed to get link for device %s: %s", dev_name, nl_geterror(err));
+			nl_socket_free(sk);
+			return -1;
+		}
+	}
+	
+	/* Set device UP */
+	struct rtnl_link *change = rtnl_link_alloc();
+	if (!change) {
+		warnx("Failed to allocate change object");
+		rtnl_link_put(link);
+		nl_socket_free(sk);
 		return -1;
 	}
+	
+	rtnl_link_set_flags(change, IFF_UP);
+	
+	err = rtnl_link_change(sk, link, change, 0);
+	if (err < 0) {
+		warnx("Failed to bring up nlmon device: %s", nl_geterror(err));
+		rtnl_link_put(change);
+		rtnl_link_put(link);
+		nl_socket_free(sk);
+		return -1;
+	}
+	
+	rtnl_link_put(change);
+	rtnl_link_put(link);
+	nl_socket_free(sk);
 	
 	if (verbose_mode)
 		log_event("nlmon device is up");
@@ -208,6 +278,7 @@ static int bind_nlmon_socket(const char *dev_name)
 	/* Get interface index */
 	memset(&ifr, 0, sizeof(ifr));
 	strncpy(ifr.ifr_name, dev_name, IFNAMSIZ - 1);
+	ifr.ifr_name[IFNAMSIZ - 1] = '\0';
 	if (ioctl(sock, SIOCGIFINDEX, &ifr) < 0) {
 		warn("Failed to get interface index for %s", dev_name);
 		close(sock);
@@ -307,6 +378,7 @@ static void nlmon_packet_cb(struct ev_loop *loop, ev_io *w, int revents)
 	ssize_t len;
 	struct nlmsghdr *nlh;
 	char msg[512];
+	char msg_type_buf[32];
 	static unsigned long packet_count = 0;
 	const char *msg_type_str = "UNKNOWN";
 	
@@ -354,10 +426,10 @@ static void nlmon_packet_cb(struct ev_loop *loop, ev_io *w, int revents)
 		case 34: msg_type_str = "RTM_GETRULE"; break;
 		default:
 			if (nlh->nlmsg_type >= 16)
-				snprintf(msg, sizeof(msg), "RTM_%u", nlh->nlmsg_type);
+				snprintf(msg_type_buf, sizeof(msg_type_buf), "RTM_%u", nlh->nlmsg_type);
 			else
-				snprintf(msg, sizeof(msg), "TYPE_%u", nlh->nlmsg_type);
-			msg_type_str = msg;
+				snprintf(msg_type_buf, sizeof(msg_type_buf), "TYPE_%u", nlh->nlmsg_type);
+			msg_type_str = msg_type_buf;
 			break;
 		}
 	}
@@ -1003,7 +1075,15 @@ int main(int argc, char *argv[])
 			break;
 			
 		case 'f':
-			filter_msg_type = atoi(optarg);
+			{
+				char *endptr;
+				long val = strtol(optarg, &endptr, 10);
+				if (*endptr != '\0' || val < 0 || val > 65535) {
+					warnx("Invalid message type filter: %s", optarg);
+					return usage(1);
+				}
+				filter_msg_type = (int)val;
+			}
 			break;
 			
 		case 'g':
