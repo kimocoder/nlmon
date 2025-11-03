@@ -2,7 +2,7 @@ EXEC   := nlmon
 SRCS   := nlmon.c
 OBJS   := nlmon.o
 LDLIBS := $(shell pkg-config --libs   libnl-route-3.0 libnl-3.0)
-LDLIBS += -lev
+LDLIBS += -lev -lncursesw -lpthread
 CFLAGS := $(shell pkg-config --cflags libnl-route-3.0 libnl-3.0)
 CFLAGS += -g -Og -W -Wall -Wextra -Wno-unused-parameter
 
