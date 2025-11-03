@@ -112,12 +112,12 @@ static void log_event(const char *msg)
 	if (cli_mode) {
 		pthread_mutex_lock(&screen_mutex);
 		if (event_count < MAX_EVENTS) {
-			strncpy(event_log[event_count], formatted_msg, sizeof(event_log[0]) - 1);
+			snprintf(event_log[event_count], sizeof(event_log[0]), "%s", formatted_msg);
 			event_count++;
 		} else {
 			/* Shift events up */
 			memmove(event_log[0], event_log[1], sizeof(event_log[0]) * (MAX_EVENTS - 1));
-			strncpy(event_log[MAX_EVENTS - 1], formatted_msg, sizeof(event_log[0]) - 1);
+			snprintf(event_log[MAX_EVENTS - 1], sizeof(event_log[0]), "%s", formatted_msg);
 		}
 		pthread_mutex_unlock(&screen_mutex);
 	} else {
