@@ -83,8 +83,8 @@ const char *qca_vendor_subcmd_to_string(unsigned int subcmd)
 		return "SPECTRAL_SCAN_START";
 	case QCA_NL80211_VENDOR_SUBCMD_SPECTRAL_SCAN_STOP:
 		return "SPECTRAL_SCAN_STOP";
-	case QCA_NL80211_VENDOR_SUBCMD_ACTIVE_TWT:
-		return "ACTIVE_TWT";
+	/* case QCA_NL80211_VENDOR_SUBCMD_ACTIVE_TWT:
+		return "ACTIVE_TWT"; */
 	case QCA_NL80211_VENDOR_SUBCMD_HANG:
 		return "HANG";
 	case QCA_NL80211_VENDOR_SUBCMD_GET_SAR_LIMITS:

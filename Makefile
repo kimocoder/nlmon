@@ -23,7 +23,7 @@ CORE_OBJS := $(CORE_SRCS:.c=.o)
 CONFIG_SRCS   := src/config/config.c src/config/yaml_parser.c src/config/hot_reload.c
 CORE_ENGINE_SRCS := src/core/ring_buffer.c src/core/thread_pool.c src/core/rate_limiter.c src/core/event_processor.c
 MEMORY_MGMT_SRCS := src/core/object_pool.c src/core/event_pool.c src/core/filter_pool.c src/core/resource_tracker.c src/core/signal_handler.c src/core/memory_tracker.c src/core/performance_profiler.c
-NETLINK_SRCS := src/core/netlink_multi_protocol.c src/core/namespace_tracker.c src/core/interface_detector.c src/core/qca_vendor.c src/core/qca_wmi.c src/core/wmi_log_reader.c src/core/wmi_event_bridge.c
+NETLINK_SRCS := src/core/netlink_multi_protocol.c src/core/namespace_tracker.c src/core/interface_detector.c src/core/qca_vendor.c src/core/qca_wmi.c src/core/wmi_log_reader.c src/core/wmi_event_bridge.c src/core/wmi_error.c
 FILTER_SRCS := src/core/filter_parser.c src/core/filter_compiler.c src/core/filter_eval.c src/core/filter_manager.c
 CORRELATION_SRCS := src/core/time_window.c src/core/correlation_engine.c src/core/pattern_detector.c src/core/anomaly_detector.c
 SECURITY_SRCS := src/core/security_detector.c src/web/access_control.c
@@ -105,6 +105,7 @@ endif
 # Build targets
 .PHONY: all clean distclean install uninstall check-deps core plugins web help tools
 .PHONY: unit-tests run-unit-tests integration-tests benchmarks test-all
+.PHONY: wmi-tests run-wmi-tests
 
 all: check-deps $(EXEC)
 
@@ -122,6 +123,31 @@ test_security: test_security.c src/core/security_detector.o src/web/access_contr
 test_alert_system: test_alert_system.c src/core/alert_manager.o $(FILTER_SRCS:.c=.o) $(CORE_ENGINE_SRCS:.c=.o) $(MEMORY_MGMT_SRCS:.c=.o)
 	@echo "  CC      $@"
 	@$(CC) $(CFLAGS) -o $@ $^ -lpthread -lcurl
+
+# WMI test programs
+test_wmi_parser: test_wmi_parser.c src/core/qca_wmi.o src/core/wmi_error.o
+	@echo "  CC      $@"
+	@$(CC) $(CFLAGS) -o $@ $^ -lpthread
+
+test_wmi_timestamps: test_wmi_timestamps.c src/core/qca_wmi.o src/core/wmi_error.o
+	@echo "  CC      $@"
+	@$(CC) $(CFLAGS) -o $@ $^ -lpthread
+
+test_wmi_log_reader: test_wmi_log_reader.c src/core/wmi_log_reader.o src/core/qca_wmi.o src/core/wmi_error.o
+	@echo "  CC      $@"
+	@$(CC) $(CFLAGS) -o $@ $^ -lpthread
+
+test_wmi_event_bridge: test_wmi_event_bridge.c src/core/wmi_event_bridge.o src/core/wmi_log_reader.o src/core/qca_wmi.o src/core/wmi_error.o src/core/event_processor.o src/core/ring_buffer.o src/core/thread_pool.o src/core/rate_limiter.o src/core/object_pool.o
+	@echo "  CC      $@"
+	@$(CC) $(CFLAGS) -o $@ $^ -lpthread
+
+test_wmi_error_handling: test_wmi_error_handling.c src/core/wmi_error.o src/core/qca_wmi.o src/core/wmi_log_reader.o
+	@echo "  CC      $@"
+	@$(CC) $(CFLAGS) -o $@ $^ -lpthread
+
+test_wmi_cli: test_wmi_cli.c
+	@echo "  CC      $@"
+	@$(CC) $(CFLAGS) -o $@ $^ -lpthread
 
 # Unit test targets
 UNIT_TEST_SRCS := tests/unit/test_ring_buffer.c tests/unit/test_filter.c tests/unit/test_object_pool.c
@@ -213,8 +239,24 @@ run-stability: test_stability
 profile-memory: test_stability
 	@./tests/memory/profile_memory.sh test_stability 30
 
+# WMI test suite
+WMI_TEST_BINS := test_wmi_parser test_wmi_timestamps test_wmi_log_reader test_wmi_event_bridge test_wmi_error_handling test_wmi_cli
+
+wmi-tests: $(WMI_TEST_BINS)
+	@echo "WMI tests built successfully"
+
+run-wmi-tests: wmi-tests
+	@echo "Running WMI tests..."
+	@for test in $(WMI_TEST_BINS); do \
+		if [ -f $$test ]; then \
+			echo "Running $$test..."; \
+			./$$test || exit 1; \
+		fi; \
+	done
+	@echo "All WMI tests passed!"
+
 # Combined test target
-test-all: run-unit-tests integration-tests run-benchmarks
+test-all: run-unit-tests integration-tests run-benchmarks run-wmi-tests
 	@echo ""
 	@echo "All tests completed successfully!"
 
@@ -287,6 +329,9 @@ clean:
 	$(RM) $(EXEC) $(ALL_OBJS)
 	$(RM) src/core/*.o src/config/*.o src/storage/*.o
 	$(RM) src/export/*.o src/plugins/*.o src/web/*.o src/cli/*.o
+	$(RM) $(UNIT_TEST_BINS) $(INTEGRATION_TEST_BINS) $(BENCHMARK_BINS) $(WMI_TEST_BINS)
+	$(RM) test_stability test_security test_alert_system audit_verify
+	$(RM) tests/integration/*.o
 
 distclean: clean
 	@echo "Cleaning all generated files..."
@@ -318,6 +363,19 @@ help:
 	@echo "  distclean    - Remove all generated files"
 	@echo "  help         - Show this help message"
 	@echo ""
+	@echo "Test Targets:"
+	@echo "  unit-tests       - Build unit tests"
+	@echo "  run-unit-tests   - Build and run unit tests"
+	@echo "  integration-tests - Build integration tests"
+	@echo "  benchmarks       - Build benchmark tests"
+	@echo "  run-benchmarks   - Build and run benchmarks"
+	@echo "  wmi-tests        - Build WMI test suite"
+	@echo "  run-wmi-tests    - Build and run WMI tests"
+	@echo "  memory-tests     - Build memory/stability tests"
+	@echo "  run-valgrind     - Run unit tests under valgrind"
+	@echo "  run-stability    - Run stability test (60 seconds)"
+	@echo "  test-all         - Run all test suites"
+	@echo ""
 	@echo "Feature Flags (set to 0 to disable):"
 	@echo "  ENABLE_CONFIG=1    - Configuration management (requires libyaml)"
 	@echo "  ENABLE_STORAGE=1   - Database storage (requires sqlite3)"
@@ -337,3 +395,5 @@ help:
 	@echo "  make ENABLE_WEB=0                 - Build without web dashboard"
 	@echo "  make PREFIX=/opt/nlmon install    - Install to /opt/nlmon"
 	@echo "  make check-deps                   - Check what dependencies are available"
+	@echo "  make run-wmi-tests                - Build and run WMI test suite"
+	@echo "  make test-all                     - Run all tests including WMI tests"

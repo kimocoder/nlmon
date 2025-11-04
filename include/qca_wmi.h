@@ -7,6 +7,8 @@
 
 #include <stddef.h>
 #include <stdint.h>
+#include <stdio.h>
+#include "wmi_error.h"
 
 /* WMI Command IDs - commonly seen in logs */
 enum wmi_cmd_id {
@@ -275,5 +277,14 @@ int wmi_parse_log_line(const char *log_line, struct wmi_log_entry *entry);
 
 /* Format WMI entry for display */
 int wmi_format_entry(const struct wmi_log_entry *entry, char *buf, size_t len);
+
+/* Get WMI parsing error statistics */
+int wmi_get_parse_stats(struct wmi_error_stats *stats);
+
+/* Reset WMI parsing error statistics */
+void wmi_reset_parse_stats(void);
+
+/* Print WMI parsing error statistics */
+void wmi_print_parse_stats(FILE *fp);
 
 #endif /* QCA_WMI_H */

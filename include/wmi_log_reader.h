@@ -11,6 +11,7 @@
 
 #include <stddef.h>
 #include <stdint.h>
+#include "wmi_error.h"
 
 /**
  * WMI log reader configuration structure
@@ -82,6 +83,14 @@ void wmi_log_reader_stop(void);
  * @return 0 on success, -1 if reader not initialized
  */
 int wmi_log_reader_get_stats(struct wmi_log_stats *stats);
+
+/**
+ * Get current error statistics
+ *
+ * @param stats Pointer to error statistics structure to fill
+ * @return 0 on success, -1 if reader not initialized
+ */
+int wmi_log_reader_get_error_stats(struct wmi_error_stats *stats);
 
 /**
  * Cleanup WMI log reader and free resources

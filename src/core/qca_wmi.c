@@ -1,11 +1,15 @@
 /* QCA WMI command decoder */
 
 #include "qca_wmi.h"
+#include "wmi_error.h"
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
 #include <ctype.h>
 #include <stdint.h>
+
+/* Global error statistics for WMI parsing */
+static struct wmi_error_stats g_wmi_parse_stats = {0};
 
 /* Convert WMI command ID to string */
 const char *wmi_cmd_to_string(unsigned int cmd_id)
@@ -317,6 +321,29 @@ static int parse_time_format(const char *str, uint64_t *timestamp)
 	return -1;
 }
 
+/* Helper: Validate MAC address format */
+static int validate_mac_address(const char *mac)
+{
+	if (!mac)
+		return 0;
+	
+	/* MAC should be XX:XX:XX:XX:XX:XX (17 chars) */
+	if (strlen(mac) != 17)
+		return 0;
+	
+	for (int i = 0; i < 17; i++) {
+		if (i % 3 == 2) {
+			if (mac[i] != ':')
+				return 0;
+		} else {
+			if (!isxdigit(mac[i]))
+				return 0;
+		}
+	}
+	
+	return 1;
+}
+
 /* Helper: Extract thread name from log line */
 static void extract_thread_name(const char *log_line, char *thread_name, size_t len)
 {
@@ -350,8 +377,30 @@ static void extract_thread_name(const char *log_line, char *thread_name, size_t 
  */
 int wmi_parse_log_line(const char *log_line, struct wmi_log_entry *entry)
 {
-	if (!log_line || !entry)
-		return -1;
+	if (!log_line) {
+		WMI_LOG_ERROR(WMI_ERR_NULL_POINTER, "log_line is NULL");
+		wmi_error_stats_record(&g_wmi_parse_stats, WMI_ERR_NULL_POINTER, NULL);
+		return WMI_ERR_NULL_POINTER;
+	}
+	
+	if (!entry) {
+		WMI_LOG_ERROR(WMI_ERR_NULL_POINTER, "entry is NULL");
+		wmi_error_stats_record(&g_wmi_parse_stats, WMI_ERR_NULL_POINTER, NULL);
+		return WMI_ERR_NULL_POINTER;
+	}
+	
+	/* Check for empty or very short lines */
+	size_t line_len = strlen(log_line);
+	if (line_len < 10) {
+		WMI_LOG_WARNING_FMT(WMI_ERR_TRUNCATED_LINE, 
+		                   "Line too short: %zu bytes", line_len);
+		wmi_error_stats_record(&g_wmi_parse_stats, WMI_ERR_TRUNCATED_LINE,
+		                      "Line too short");
+		return WMI_ERR_TRUNCATED_LINE;
+	}
+	
+	/* Track total operations */
+	g_wmi_parse_stats.total_operations++;
 	
 	/* Initialize entry */
 	memset(entry, 0, sizeof(*entry));
@@ -385,6 +434,16 @@ int wmi_parse_log_line(const char *log_line, struct wmi_log_entry *entry)
 			const char *id_str = strstr(log_line, "command_id:");
 			if (id_str) {
 				entry->cmd_id = strtoul(id_str + 11, NULL, 10);
+				
+				/* Check if command ID is known */
+				const char *cmd_name = wmi_cmd_to_string(entry->cmd_id);
+				if (strcmp(cmd_name, "UNKNOWN") == 0) {
+					WMI_LOG_WARNING_FMT(WMI_ERR_INVALID_CMD_ID,
+					                   "Unknown command ID: 0x%x", entry->cmd_id);
+					wmi_error_stats_record(&g_wmi_parse_stats, 
+					                      WMI_ERR_INVALID_CMD_ID,
+					                      "Unknown command ID");
+				}
 			}
 			
 			/* Parse htc_tag */
@@ -393,7 +452,7 @@ int wmi_parse_log_line(const char *log_line, struct wmi_log_entry *entry)
 				entry->htc_tag = strtoul(tag_str + 8, NULL, 10);
 			}
 			
-			return 0;
+			return WMI_SUCCESS;
 		}
 	}
 	
@@ -439,11 +498,28 @@ int wmi_parse_log_line(const char *log_line, struct wmi_log_entry *entry)
 				}
 			}
 			entry->peer_mac[i] = '\0';
-			if (i == 17)
-				entry->has_peer = 1;
+			
+			/* Validate MAC address */
+			if (i == 17) {
+				if (validate_mac_address(entry->peer_mac)) {
+					entry->has_peer = 1;
+				} else {
+					WMI_LOG_WARNING_FMT(WMI_ERR_INVALID_MAC,
+					                   "Invalid MAC address: %s", entry->peer_mac);
+					wmi_error_stats_record(&g_wmi_parse_stats, WMI_ERR_INVALID_MAC,
+					                      entry->peer_mac);
+					entry->peer_mac[0] = '\0';
+				}
+			} else if (i > 0) {
+				WMI_LOG_WARNING_FMT(WMI_ERR_INVALID_MAC,
+				                   "Incomplete MAC address: %d chars", i);
+				wmi_error_stats_record(&g_wmi_parse_stats, WMI_ERR_INVALID_MAC,
+				                      "Incomplete MAC");
+				entry->peer_mac[0] = '\0';
+			}
 		}
 		
-		return 0;
+		return WMI_SUCCESS;
 	}
 	
 	/* Format 3: "STATS REQ STATS_ID:" */
@@ -472,7 +548,7 @@ int wmi_parse_log_line(const char *log_line, struct wmi_log_entry *entry)
 			entry->pdev_id = strtoul(pdev_str + 8, NULL, 10);
 		}
 		
-		return 0;
+		return WMI_SUCCESS;
 	}
 	
 	/* Format 4: "RCPI REQ VDEV_ID:" */
@@ -486,7 +562,7 @@ int wmi_parse_log_line(const char *log_line, struct wmi_log_entry *entry)
 			entry->vdev_id = strtoul(vdev_str + 8, NULL, 10);
 		}
 		
-		return 0;
+		return WMI_SUCCESS;
 	}
 	
 	/* Format 5: "DBGLOG_TIME_STAMP_SYNC_CMDID" */
@@ -512,10 +588,16 @@ int wmi_parse_log_line(const char *log_line, struct wmi_log_entry *entry)
 			entry->timestamp_high = strtoul(high_str + 5, NULL, 10);
 		}
 		
-		return 0;
+		return WMI_SUCCESS;
 	}
 	
-	return -1;  /* No recognized format */
+	/* No recognized format - log warning but don't fail completely */
+	WMI_LOG_WARNING_FMT(WMI_ERR_UNKNOWN_FORMAT,
+	                   "Unknown WMI log format: %.50s...", log_line);
+	wmi_error_stats_record(&g_wmi_parse_stats, WMI_ERR_UNKNOWN_FORMAT,
+	                      "Unrecognized log format");
+	
+	return WMI_ERR_UNKNOWN_FORMAT;
 }
 
 /* Format WMI entry for display */
@@ -587,4 +669,37 @@ int wmi_format_entry(const struct wmi_log_entry *entry, char *buf, size_t len)
 	}
 	
 	return pos;
+}
+
+/**
+ * Get WMI parsing error statistics
+ */
+int wmi_get_parse_stats(struct wmi_error_stats *stats)
+{
+	if (!stats) {
+		return WMI_ERR_NULL_POINTER;
+	}
+	
+	*stats = g_wmi_parse_stats;
+	return WMI_SUCCESS;
+}
+
+/**
+ * Reset WMI parsing error statistics
+ */
+void wmi_reset_parse_stats(void)
+{
+	wmi_error_stats_reset(&g_wmi_parse_stats);
+}
+
+/**
+ * Print WMI parsing error statistics
+ */
+void wmi_print_parse_stats(FILE *fp)
+{
+	if (!fp) {
+		fp = stderr;
+	}
+	
+	wmi_error_stats_print(&g_wmi_parse_stats, fp);
 }

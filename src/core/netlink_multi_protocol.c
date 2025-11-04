@@ -223,12 +223,12 @@ int nlmon_parse_generic_msg(struct nlmsghdr *nlh, struct nlmon_generic_msg *msg)
 	while (nla_ok(attr, attr_len)) {
 		/* Check for vendor ID and subcmd attributes (nl80211 specific) */
 		if (nla_type(attr) == 195) {  /* NL80211_ATTR_VENDOR_ID */
-			if (nla_len(attr) >= sizeof(uint32_t)) {
+			if ((size_t)nla_len(attr) >= sizeof(uint32_t)) {
 				vendor_id = *(uint32_t *)nla_data(attr);
 				is_vendor_cmd = 1;
 			}
 		} else if (nla_type(attr) == 196) {  /* NL80211_ATTR_VENDOR_SUBCMD */
-			if (nla_len(attr) >= sizeof(uint32_t)) {
+			if ((size_t)nla_len(attr) >= sizeof(uint32_t)) {
 				vendor_subcmd = *(uint32_t *)nla_data(attr);
 			}
 		}
@@ -237,9 +237,9 @@ int nlmon_parse_generic_msg(struct nlmsghdr *nlh, struct nlmon_generic_msg *msg)
 	
 	/* Check if this is a QCA vendor command */
 	if (is_vendor_cmd && vendor_id == OUI_QCA) {
-		const char *subcmd_name = qca_vendor_subcmd_to_string(vendor_subcmd);
+		/* TODO: Implement qca_vendor_subcmd_to_string() for vendor subcmd decoding */
 		snprintf(msg->family_name, sizeof(msg->family_name), 
-		         "nl80211/QCA:%s", subcmd_name);
+		         "nl80211/QCA:0x%x", vendor_subcmd);
 		msg->cmd = vendor_subcmd;  /* Override with vendor subcmd for better display */
 	} else if (is_vendor_cmd) {
 		snprintf(msg->family_name, sizeof(msg->family_name), 
