@@ -1,0 +1,134 @@
+# nlmon - Network Link Monitor Configuration
+# Example configuration file demonstrating all available options
+
+nlmon:
+  # Core event processing configuration
+  core:
+    buffer_size: 320KB          # Event buffer size (supports KB, MB, GB)
+    max_events: 10000           # Maximum events in memory buffer
+    rate_limit: 1000            # Events per second limit (0 = unlimited)
+    worker_threads: 4           # Number of worker threads for processing
+  
+  # Network monitoring configuration
+  monitoring:
+    # Netlink protocol families to monitor
+    protocols:
+      - 0                       # NETLINK_ROUTE (default)
+    
+    # Interface filtering
+    interfaces:
+      include:
+        - "eth*"                # Include all eth interfaces
+        - "veth*"               # Include all veth interfaces
+      exclude:
+        - "lo"                  # Exclude loopback
+    
+    # Message types to monitor (empty = all)
+    message_types:
+      - 16                      # RTM_NEWLINK
+      - 17                      # RTM_DELLINK
+      - 20                      # RTM_NEWADDR
+      - 21                      # RTM_DELADDR
+    
+    # Network namespace support
+    namespaces:
+      enabled: false
+  
+  # Event filtering rules
+  filters:
+    - name: "container_events"
+      expression: "interface =~ 'veth.*'"
+      enabled: true
+    
+    - name: "critical_interfaces"
+      expression: "interface IN ['eth0', 'eth1']"
+      enabled: true
+  
+  # Output configuration
+  output:
+    # Console output
+    console:
+      enabled: true
+      format: "text"            # text or json
+    
+    # PCAP file output
+    pcap:
+      enabled: false
+      file: "/var/log/nlmon/capture.pcap"
+      rotate_size: 100MB        # Rotate when file reaches this size
+    
+    # SQLite database storage
+    database:
+      enabled: false
+      path: "/var/lib/nlmon/events.db"
+      retention_days: 30        # Delete events older than this
+  
+  # CLI (ncurses) interface configuration
+  cli:
+    enabled: false
+    refresh_rate: 100ms         # Screen refresh rate
+    max_history: 1000           # Maximum events to keep in history
+  
+  # Web dashboard configuration
+  web:
+    enabled: false
+    port: 8080
+    tls:
+      enabled: false
+      cert: "/etc/nlmon/cert.pem"
+      key: "/etc/nlmon/key.pem"
+  
+  # Prometheus metrics export
+  metrics:
+    enabled: false
+    port: 9090
+    path: "/metrics"
+  
+  # Plugin system configuration
+  plugins:
+    directory: "/usr/lib/nlmon/plugins"
+    enabled:
+      - "kubernetes"
+      - "docker"
+  
+  # Alert rules
+  alerts:
+    - name: "interface_down"
+      condition: "event.type == 'RTM_DELLINK'"
+      action: "exec:/usr/local/bin/alert.sh"
+      enabled: true
+    
+    - name: "arp_flood"
+      condition: "rate(RTM_NEWNEIGH) > 100"
+      action: "log:security"
+      enabled: true
+  
+  # External system integrations
+  integration:
+    # Kubernetes integration
+    kubernetes:
+      enabled: false
+      kubeconfig: "~/.kube/config"
+    
+    # Docker integration
+    docker:
+      enabled: false
+      socket: "/var/run/docker.sock"
+    
+    # Syslog forwarding
+    syslog:
+      enabled: false
+      server: "syslog.example.com:514"
+      protocol: "tcp"           # tcp or udp
+    
+    # SNMP trap sending
+    snmp:
+      enabled: false
+      trap_receivers:
+        - "192.168.1.10:162"
+        - "192.168.1.11:162"
+
+# Environment variable substitution is supported:
+# Use ${VAR_NAME} syntax, e.g.:
+#   path: "${HOME}/.nlmon/events.db"
+#   server: "${SYSLOG_SERVER}:514"

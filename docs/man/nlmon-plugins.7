@@ -1,0 +1,519 @@
+.TH NLMON-PLUGINS 7 "November 2025" "nlmon 2.0" "Miscellaneous"
+.SH NAME
+nlmon-plugins \- plugin development guide for nlmon network monitor
+.SH DESCRIPTION
+.B nlmon
+supports a plugin architecture that allows developers to extend functionality without modifying the core application. Plugins are shared libraries (.so files) that are dynamically loaded at runtime.
+
+Plugins can:
+.IP \(bu 2
+Process and enrich network events
+.IP \(bu 2
+Add custom export formats
+.IP \(bu 2
+Integrate with external systems
+.IP \(bu 2
+Add custom CLI commands
+.IP \(bu 2
+Implement custom security detectors
+.IP \(bu 2
+Provide additional data sources
+.SH PLUGIN API
+.SS API Version
+The current plugin API version is 1. Plugins must declare their API version to ensure compatibility.
+.SS Plugin Structure
+A plugin is defined by the
+.B nlmon_plugin_t
+structure:
+.PP
+.nf
+#include <nlmon/plugin_api.h>
+
+typedef struct nlmon_plugin {
+    const char *name;           /* Plugin name */
+    const char *version;        /* Plugin version */
+    const char *description;    /* Brief description */
+    int api_version;            /* API version (must be 1) */
+    
+    /* Lifecycle callbacks */
+    int (*init)(struct nlmon_context *ctx);
+    void (*cleanup)(void);
+    
+    /* Event processing */
+    int (*on_event)(struct nlmon_event *event);
+    
+    /* CLI command handler */
+    int (*on_command)(const char *cmd, char *response, 
+                      size_t resp_len);
+} nlmon_plugin_t;
+.fi
+.SS Required Export
+Every plugin must export a registration function:
+.PP
+.nf
+nlmon_plugin_t *nlmon_plugin_register(void);
+.fi
+.PP
+This function returns a pointer to the plugin structure.
+.SH PLUGIN CONTEXT
+The
+.B nlmon_context
+structure provides plugins with access to nlmon functionality:
+.PP
+.nf
+struct nlmon_context {
+    /* Configuration access */
+    struct nlmon_config *config;
+    
+    /* Logging */
+    void (*log)(int level, const char *fmt, ...);
+    
+    /* Command registration */
+    int (*register_command)(const char *name, 
+                           command_handler_t handler);
+    
+    /* Event emission */
+    int (*emit_event)(struct nlmon_event *event);
+    
+    /* Filter registration */
+    int (*register_filter)(const char *name,
+                          filter_func_t filter);
+    
+    /* Metrics */
+    int (*increment_counter)(const char *name);
+    int (*set_gauge)(const char *name, double value);
+    int (*observe_histogram)(const char *name, double value);
+};
+.fi
+.SH EVENT STRUCTURE
+Events are represented by the
+.B nlmon_event
+structure:
+.PP
+.nf
+struct nlmon_event {
+    uint64_t timestamp;         /* Event timestamp (ns) */
+    uint64_t sequence;          /* Sequence number */
+    enum event_type type;       /* Event type */
+    uint16_t message_type;      /* RTM message type */
+    char interface[IFNAMSIZ];   /* Interface name */
+    char namespace[256];        /* Network namespace */
+    
+    /* Event-specific data */
+    union {
+        struct link_event link;
+        struct addr_event addr;
+        struct route_event route;
+        struct neigh_event neigh;
+        struct rule_event rule;
+    } data;
+    
+    /* Correlation */
+    char *correlation_id;
+    
+    /* Plugin metadata */
+    void *plugin_data;
+    void (*free_plugin_data)(void *);
+};
+.fi
+.SH LIFECYCLE CALLBACKS
+.SS init
+Called when the plugin is loaded. Use this to:
+.IP \(bu 2
+Initialize plugin state
+.IP \(bu 2
+Register CLI commands
+.IP \(bu 2
+Allocate resources
+.IP \(bu 2
+Validate configuration
+.PP
+Return 0 on success, non-zero on error.
+.SS cleanup
+Called when nlmon exits or the plugin is unloaded. Use this to:
+.IP \(bu 2
+Free allocated resources
+.IP \(bu 2
+Close connections
+.IP \(bu 2
+Flush buffers
+.SH EVENT PROCESSING
+.SS on_event
+Called for each network event. The plugin can:
+.IP \(bu 2
+Inspect event data
+.IP \(bu 2
+Enrich events with additional information
+.IP \(bu 2
+Filter events (return non-zero to drop)
+.IP \(bu 2
+Generate derived events
+.IP \(bu 2
+Update statistics
+.PP
+Return 0 to continue processing, non-zero to drop the event.
+.PP
+.B Warning:
+This callback is called in the event processing path. Keep processing fast to avoid impacting performance.
+.SH CLI COMMANDS
+.SS on_command
+Called when a user executes a plugin-registered command in CLI mode.
+.PP
+Parameters:
+.IP \(bu 2
+.B cmd
+\- Command string entered by user
+.IP \(bu 2
+.B response
+\- Buffer for response text
+.IP \(bu 2
+.B resp_len
+\- Size of response buffer
+.PP
+Return 0 on success, non-zero on error.
+.SH BUILDING PLUGINS
+.SS Compilation
+Plugins are compiled as shared libraries:
+.PP
+.nf
+gcc \-shared \-fPIC \-o myplugin.so myplugin.c \\
+    \-I/usr/include/nlmon \\
+    \-lnlmon
+.fi
+.SS Makefile Example
+.nf
+CC = gcc
+CFLAGS = \-Wall \-Wextra \-fPIC \-I/usr/include/nlmon
+LDFLAGS = \-shared
+
+PLUGIN = myplugin.so
+SOURCES = myplugin.c
+OBJECTS = $(SOURCES:.c=.o)
+
+all: $(PLUGIN)
+
+$(PLUGIN): $(OBJECTS)
+	$(CC) $(LDFLAGS) \-o $@ $^
+
+%.o: %.c
+	$(CC) $(CFLAGS) \-c $<
+
+clean:
+	rm \-f $(OBJECTS) $(PLUGIN)
+
+install:
+	install \-m 755 $(PLUGIN) /usr/lib/nlmon/plugins/
+.fi
+.SH PLUGIN EXAMPLES
+.SS Simple Event Logger
+.nf
+#include <nlmon/plugin_api.h>
+#include <stdio.h>
+
+static FILE *logfile = NULL;
+
+static int init(struct nlmon_context *ctx) {
+    logfile = fopen("/var/log/nlmon/plugin.log", "a");
+    if (!logfile) {
+        ctx->log(LOG_ERR, "Failed to open log file");
+        return \-1;
+    }
+    ctx->log(LOG_INFO, "Event logger plugin initialized");
+    return 0;
+}
+
+static void cleanup(void) {
+    if (logfile) {
+        fclose(logfile);
+    }
+}
+
+static int on_event(struct nlmon_event *event) {
+    fprintf(logfile, "[%lu] %s: %s\\n",
+            event->timestamp,
+            event->interface,
+            event_type_to_string(event->type));
+    fflush(logfile);
+    return 0;
+}
+
+static nlmon_plugin_t plugin = {
+    .name = "event_logger",
+    .version = "1.0.0",
+    .description = "Logs events to file",
+    .api_version = NLMON_PLUGIN_API_VERSION,
+    .init = init,
+    .cleanup = cleanup,
+    .on_event = on_event,
+    .on_command = NULL
+};
+
+nlmon_plugin_t *nlmon_plugin_register(void) {
+    return &plugin;
+}
+.fi
+.SS Event Enrichment Plugin
+.nf
+#include <nlmon/plugin_api.h>
+#include <string.h>
+
+static struct nlmon_context *ctx = NULL;
+
+static int init(struct nlmon_context *context) {
+    ctx = context;
+    ctx->log(LOG_INFO, "Enrichment plugin initialized");
+    return 0;
+}
+
+static int on_event(struct nlmon_event *event) {
+    /* Enrich container interfaces */
+    if (strncmp(event->interface, "veth", 4) == 0) {
+        /* Add custom metadata */
+        struct container_info *info = malloc(sizeof(*info));
+        if (info) {
+            info->container_id = get_container_id(event->interface);
+            info->pod_name = get_pod_name(event->interface);
+            
+            event->plugin_data = info;
+            event->free_plugin_data = free;
+        }
+    }
+    return 0;
+}
+
+static nlmon_plugin_t plugin = {
+    .name = "enrichment",
+    .version = "1.0.0",
+    .description = "Enriches events with container info",
+    .api_version = NLMON_PLUGIN_API_VERSION,
+    .init = init,
+    .cleanup = NULL,
+    .on_event = on_event,
+    .on_command = NULL
+};
+
+nlmon_plugin_t *nlmon_plugin_register(void) {
+    return &plugin;
+}
+.fi
+.SS Custom Exporter Plugin
+.nf
+#include <nlmon/plugin_api.h>
+#include <curl/curl.h>
+
+static CURL *curl = NULL;
+static char *webhook_url = NULL;
+
+static int init(struct nlmon_context *ctx) {
+    curl_global_init(CURL_GLOBAL_DEFAULT);
+    curl = curl_easy_init();
+    
+    /* Get webhook URL from config */
+    webhook_url = strdup(ctx->config->plugins.webhook_url);
+    
+    ctx->log(LOG_INFO, "Webhook exporter initialized");
+    return 0;
+}
+
+static void cleanup(void) {
+    if (curl) {
+        curl_easy_cleanup(curl);
+    }
+    curl_global_cleanup();
+    free(webhook_url);
+}
+
+static int on_event(struct nlmon_event *event) {
+    /* Only export critical events */
+    if (event->type != EVENT_LINK_DOWN) {
+        return 0;
+    }
+    
+    /* Format JSON payload */
+    char json[1024];
+    snprintf(json, sizeof(json),
+             "{\\"event\\":\\"link_down\\",\\"interface\\":\\"%s\\"}",
+             event->interface);
+    
+    /* Send to webhook */
+    curl_easy_setopt(curl, CURLOPT_URL, webhook_url);
+    curl_easy_setopt(curl, CURLOPT_POSTFIELDS, json);
+    curl_easy_perform(curl);
+    
+    return 0;
+}
+
+static nlmon_plugin_t plugin = {
+    .name = "webhook_exporter",
+    .version = "1.0.0",
+    .description = "Exports events to webhook",
+    .api_version = NLMON_PLUGIN_API_VERSION,
+    .init = init,
+    .cleanup = cleanup,
+    .on_event = on_event,
+    .on_command = NULL
+};
+
+nlmon_plugin_t *nlmon_plugin_register(void) {
+    return &plugin;
+}
+.fi
+.SS CLI Command Plugin
+.nf
+#include <nlmon/plugin_api.h>
+#include <string.h>
+
+static int stats_command(const char *cmd, char *response, 
+                        size_t resp_len) {
+    snprintf(response, resp_len,
+             "Plugin Statistics:\\n"
+             "Events processed: %lu\\n"
+             "Events filtered: %lu\\n",
+             events_processed, events_filtered);
+    return 0;
+}
+
+static int init(struct nlmon_context *ctx) {
+    ctx->register_command("plugin_stats", stats_command);
+    ctx->log(LOG_INFO, "CLI command plugin initialized");
+    return 0;
+}
+
+static nlmon_plugin_t plugin = {
+    .name = "cli_commands",
+    .version = "1.0.0",
+    .description = "Adds custom CLI commands",
+    .api_version = NLMON_PLUGIN_API_VERSION,
+    .init = init,
+    .cleanup = NULL,
+    .on_event = NULL,
+    .on_command = stats_command
+};
+
+nlmon_plugin_t *nlmon_plugin_register(void) {
+    return &plugin;
+}
+.fi
+.SH PLUGIN CONFIGURATION
+Plugins can access their configuration through the context:
+.PP
+.nf
+nlmon:
+  plugins:
+    directory: "/usr/lib/nlmon/plugins"
+    enabled:
+      - myplugin
+    config:
+      myplugin:
+        option1: value1
+        option2: value2
+.fi
+.PP
+Access in plugin:
+.nf
+const char *value = ctx->config->plugins.config["myplugin"]["option1"];
+.fi
+.SH BEST PRACTICES
+.SS Performance
+.IP \(bu 2
+Keep on_event() fast \- it's called for every event
+.IP \(bu 2
+Use asynchronous I/O for network operations
+.IP \(bu 2
+Batch operations when possible
+.IP \(bu 2
+Avoid blocking calls in event processing
+.SS Memory Management
+.IP \(bu 2
+Free all allocated resources in cleanup()
+.IP \(bu 2
+Use plugin_data with free_plugin_data for event metadata
+.IP \(bu 2
+Avoid memory leaks \- test with valgrind
+.SS Error Handling
+.IP \(bu 2
+Return appropriate error codes
+.IP \(bu 2
+Log errors using ctx->log()
+.IP \(bu 2
+Handle NULL pointers gracefully
+.IP \(bu 2
+Validate all inputs
+.SS Thread Safety
+.IP \(bu 2
+Assume on_event() may be called from multiple threads
+.IP \(bu 2
+Use proper synchronization for shared state
+.IP \(bu 2
+Prefer thread-local storage when possible
+.SS Security
+.IP \(bu 2
+Validate all external inputs
+.IP \(bu 2
+Use secure functions (strncpy, snprintf)
+.IP \(bu 2
+Avoid buffer overflows
+.IP \(bu 2
+Don't trust event data blindly
+.SH DEBUGGING
+.SS Enable Debug Logging
+.nf
+ctx->log(LOG_DEBUG, "Debug message: %s", data);
+.fi
+.SS Use GDB
+.nf
+gdb \-\-args nlmon \-\-plugin\-dir /path/to/plugins
+(gdb) break myplugin.c:on_event
+(gdb) run
+.fi
+.SS Valgrind
+.nf
+valgrind \-\-leak\-check=full nlmon \-\-enable\-plugin=myplugin
+.fi
+.SH PLUGIN DISCOVERY
+nlmon discovers plugins by:
+.IP 1. 4
+Scanning the plugin directory for .so files
+.IP 2. 4
+Loading each library with dlopen()
+.IP 3. 4
+Looking for nlmon_plugin_register() symbol
+.IP 4. 4
+Verifying API version compatibility
+.IP 5. 4
+Calling init() callback
+.PP
+Plugins can be enabled/disabled in configuration:
+.nf
+nlmon:
+  plugins:
+    enabled:
+      - myplugin
+    disabled:
+      - otherplugin
+.fi
+.SH FILES
+.TP
+.I /usr/lib/nlmon/plugins/
+Default plugin directory
+.TP
+.I /usr/include/nlmon/plugin_api.h
+Plugin API header file
+.TP
+.I /usr/lib/libnlmon.so
+nlmon shared library
+.SH ENVIRONMENT
+.TP
+.B NLMON_PLUGIN_DIR
+Override default plugin directory
+.SH SEE ALSO
+.BR nlmon (1),
+.BR nlmon.conf (5),
+.BR dlopen (3),
+.BR ld.so (8)
+.PP
+Plugin examples: /usr/share/doc/nlmon/examples/plugins/
+.PP
+Full documentation: https://github.com/yourusername/nlmon/wiki/Plugin-Development
+.SH AUTHOR
+Written by the nlmon development team.

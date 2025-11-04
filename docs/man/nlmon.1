@@ -1,0 +1,328 @@
+.TH NLMON 1 "November 2025" "nlmon 2.0" "User Commands"
+.SH NAME
+nlmon \- Network Link Monitor - Real-time network event monitoring tool
+.SH SYNOPSIS
+.B nlmon
+[\fIOPTIONS\fR]
+.SH DESCRIPTION
+.B nlmon
+is a comprehensive network event monitoring tool that captures and analyzes Linux kernel netlink events in real-time. It provides multiple interfaces (CLI, Web Dashboard, REST API) for monitoring network state changes including interface status, routing table modifications, address assignments, and neighbor table updates.
+
+nlmon supports advanced features including event filtering, correlation analysis, security detection, plugin extensions, and integration with container orchestration platforms.
+.SH OPTIONS
+.TP
+.BR \-h ", " \-\-help
+Display help message and exit
+.TP
+.BR \-v ", " \-\-version
+Display version information and exit
+.TP
+.BR \-c ", " \-\-config =\fIFILE\fR
+Load configuration from FILE (default: /etc/nlmon/nlmon.yaml or ~/.nlmon/config.yaml)
+.TP
+.BR \-\-validate\-config
+Validate configuration file and exit without starting monitoring
+.TP
+.BR \-i ", " \-\-interface =\fIPATTERN\fR
+Monitor only interfaces matching PATTERN (supports wildcards)
+.TP
+.BR \-t ", " \-\-type =\fITYPE\fR
+Filter by message type (RTM_NEWLINK, RTM_DELLINK, RTM_NEWADDR, etc.)
+.TP
+.BR \-n ", " \-\-namespace =\fINAME\fR
+Monitor only events in network namespace NAME
+.TP
+.BR \-f ", " \-\-filter =\fIEXPR\fR
+Apply filter expression (e.g., "interface =~ 'eth.*' AND message_type == RTM_NEWLINK")
+.TP
+.BR \-o ", " \-\-output =\fIFORMAT\fR
+Output format: text, json, pcap (default: text)
+.TP
+.BR \-\-pcap =\fIFILE\fR
+Write PCAP output to FILE
+.TP
+.BR \-\-json =\fIFILE\fR
+Write JSON output to FILE
+.TP
+.BR \-\-db =\fIFILE\fR
+Store events in SQLite database FILE
+.TP
+.BR \-\-no\-cli
+Disable interactive CLI mode (useful for daemon mode)
+.TP
+.BR \-\-web\-port =\fIPORT\fR
+Enable web dashboard on PORT (default: 8080)
+.TP
+.BR \-\-metrics\-port =\fIPORT\fR
+Enable Prometheus metrics endpoint on PORT (default: 9090)
+.TP
+.BR \-\-plugin\-dir =\fIDIR\fR
+Load plugins from directory DIR (default: /usr/lib/nlmon/plugins)
+.TP
+.BR \-\-enable\-plugin =\fINAME\fR
+Enable specific plugin by NAME
+.TP
+.BR \-\-disable\-plugin =\fINAME\fR
+Disable specific plugin by NAME
+.TP
+.BR \-\-rate\-limit =\fIN\fR
+Limit event processing to N events per second
+.TP
+.BR \-\-buffer\-size =\fISIZE\fR
+Set event buffer size (default: 10000 events)
+.TP
+.BR \-\-log\-level =\fILEVEL\fR
+Set logging level: debug, info, warning, error (default: info)
+.TP
+.BR \-\-daemon
+Run as daemon in background
+.TP
+.BR \-\-pid\-file =\fIFILE\fR
+Write process ID to FILE when running as daemon
+.SH INTERACTIVE COMMANDS
+When running in CLI mode, the following key bindings are available:
+.TP
+.B q
+Quit the application
+.TP
+.B h, F1
+Display help screen
+.TP
+.B c
+Clear event log
+.TP
+.B /
+Enter search mode
+.TP
+.B f
+Open filter builder dialog
+.TP
+.B s
+Toggle sort options (time, type, interface)
+.TP
+.B e
+Export visible events to file
+.TP
+.B d, Enter
+Show detailed information for selected event
+.TP
+.B t
+Toggle timestamp display format
+.TP
+.B p, Space
+Pause/resume event capture
+.TP
+.B r
+Reload configuration
+.TP
+.B Up/Down arrows
+Scroll through events
+.TP
+.B PgUp/PgDn
+Page up/down through events
+.TP
+.B Home/End
+Jump to first/last event
+.TP
+.B Tab
+Switch between panels
+.SH FILTER EXPRESSIONS
+nlmon supports a powerful filter expression language for event filtering:
+.SS Simple Filters
+.nf
+interface == "eth0"
+message_type == RTM_NEWLINK
+namespace == "default"
+.fi
+.SS Pattern Matching
+.nf
+interface =~ "veth.*"
+interface !~ "lo"
+.fi
+.SS Logical Operators
+.nf
+interface == "eth0" AND message_type == RTM_NEWLINK
+interface =~ "veth.*" OR interface =~ "docker.*"
+NOT (interface == "lo")
+.fi
+.SS Complex Expressions
+.nf
+(interface =~ "veth.*" AND message_type IN [16, 17]) OR priority == "high"
+.fi
+.SH CONFIGURATION
+nlmon reads configuration from YAML files in the following order:
+.IP 1. 4
+/etc/nlmon/nlmon.yaml (system-wide configuration)
+.IP 2. 4
+~/.nlmon/config.yaml (user-specific configuration)
+.IP 3. 4
+File specified with \-\-config option
+.PP
+Configuration values can be overridden using environment variables with the NLMON_ prefix.
+For example, NLMON_WEB_PORT=9000 overrides the web.port configuration value.
+
+See
+.BR nlmon.conf (5)
+for detailed configuration file format and options.
+.SH PLUGINS
+nlmon supports a plugin architecture for extending functionality. Plugins are shared libraries (.so files) loaded from the plugin directory.
+
+Plugins can:
+.IP \(bu 2
+Process and enrich events
+.IP \(bu 2
+Add custom export formats
+.IP \(bu 2
+Integrate with external systems
+.IP \(bu 2
+Add custom CLI commands
+
+See
+.BR nlmon-plugins (7)
+for plugin development documentation.
+.SH EXAMPLES
+.SS Basic Usage
+Monitor all network events with interactive CLI:
+.PP
+.nf
+.RS
+nlmon
+.RE
+.fi
+.SS Filter by Interface
+Monitor only ethernet interfaces:
+.PP
+.nf
+.RS
+nlmon \-i "eth*"
+.RE
+.fi
+.SS Export to PCAP
+Capture events to PCAP file for Wireshark analysis:
+.PP
+.nf
+.RS
+nlmon \-\-pcap /tmp/network_events.pcap
+.RE
+.fi
+.SS JSON Output
+Export events in JSON format:
+.PP
+.nf
+.RS
+nlmon \-o json \-\-json /var/log/nlmon/events.json
+.RE
+.fi
+.SS Complex Filter
+Monitor container interfaces with link state changes:
+.PP
+.nf
+.RS
+nlmon \-f "interface =~ 'veth.*' AND message_type IN [RTM_NEWLINK, RTM_DELLINK]"
+.RE
+.fi
+.SS Web Dashboard
+Enable web dashboard and metrics:
+.PP
+.nf
+.RS
+nlmon \-\-web\-port 8080 \-\-metrics\-port 9090
+.RE
+.fi
+.SS Daemon Mode
+Run as daemon with database storage:
+.PP
+.nf
+.RS
+nlmon \-\-daemon \-\-no\-cli \-\-db /var/lib/nlmon/events.db \-\-pid\-file /var/run/nlmon.pid
+.RE
+.fi
+.SS With Configuration File
+Use custom configuration:
+.PP
+.nf
+.RS
+nlmon \-c /etc/nlmon/production.yaml
+.RE
+.fi
+.SH FILES
+.TP
+.I /etc/nlmon/nlmon.yaml
+System-wide configuration file
+.TP
+.I ~/.nlmon/config.yaml
+User-specific configuration file
+.TP
+.I /usr/lib/nlmon/plugins/
+Default plugin directory
+.TP
+.I /var/lib/nlmon/
+Default data directory for database and logs
+.TP
+.I /var/log/nlmon/
+Default log directory
+.TP
+.I /var/run/nlmon.pid
+PID file when running as daemon
+.SH ENVIRONMENT
+.TP
+.B NLMON_CONFIG
+Override default configuration file path
+.TP
+.B NLMON_PLUGIN_DIR
+Override default plugin directory
+.TP
+.B NLMON_LOG_LEVEL
+Override log level (debug, info, warning, error)
+.TP
+.B NLMON_WEB_PORT
+Override web dashboard port
+.TP
+.B NLMON_METRICS_PORT
+Override Prometheus metrics port
+.PP
+Any configuration value can be overridden using environment variables with the NLMON_ prefix, converting nested keys to uppercase with underscores (e.g., web.port becomes NLMON_WEB_PORT).
+.SH EXIT STATUS
+.TP
+.B 0
+Success
+.TP
+.B 1
+General error
+.TP
+.B 2
+Invalid command-line arguments
+.TP
+.B 3
+Configuration error
+.TP
+.B 4
+Permission denied (requires CAP_NET_ADMIN capability)
+.TP
+.B 5
+Plugin load error
+.SH SECURITY
+nlmon requires CAP_NET_ADMIN capability to access netlink sockets. It can be run as root or with the appropriate capability:
+.PP
+.nf
+.RS
+sudo setcap cap_net_admin+ep /usr/bin/nlmon
+.RE
+.fi
+.PP
+When enabling the web dashboard, consider using TLS encryption and authentication to protect sensitive network information.
+.SH BUGS
+Report bugs to: https://github.com/yourusername/nlmon/issues
+.SH SEE ALSO
+.BR nlmon.conf (5),
+.BR nlmon-plugins (7),
+.BR ip (8),
+.BR netlink (7),
+.BR rtnetlink (7)
+.PP
+Full documentation: https://github.com/yourusername/nlmon/wiki
+.SH AUTHOR
+Written by the nlmon development team.
+.SH COPYRIGHT
+Copyright \(co 2025 nlmon contributors.
+License: MIT License

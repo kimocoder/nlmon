@@ -1,0 +1,56 @@
+# Valgrind suppressions for nlmon
+# Suppress known false positives
+
+# ncurses library leaks
+{
+   ncurses_init
+   Memcheck:Leak
+   ...
+   fun:initscr
+}
+
+{
+   ncurses_newterm
+   Memcheck:Leak
+   ...
+   fun:newterm
+}
+
+# pthread library
+{
+   pthread_create
+   Memcheck:Leak
+   ...
+   fun:pthread_create*
+}
+
+# libnl library
+{
+   libnl_cache
+   Memcheck:Leak
+   ...
+   obj:*/libnl*.so*
+}
+
+# OpenSSL library
+{
+   openssl_init
+   Memcheck:Leak
+   ...
+   obj:*/libssl.so*
+}
+
+{
+   openssl_crypto
+   Memcheck:Leak
+   ...
+   obj:*/libcrypto.so*
+}
+
+# YAML library
+{
+   yaml_parser
+   Memcheck:Leak
+   ...
+   obj:*/libyaml*.so*
+}

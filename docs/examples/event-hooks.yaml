@@ -1,0 +1,92 @@
+# Event Hooks Configuration Example
+# This example demonstrates how to configure event hooks in nlmon
+
+nlmon:
+  core:
+    buffer_size: 320KB
+    max_events: 10000
+    rate_limit: 1000
+    worker_threads: 4
+  
+  monitoring:
+    protocols:
+      - 0  # NETLINK_ROUTE
+    interfaces:
+      include:
+        - "eth*"
+        - "veth*"
+    namespaces:
+      enabled: true
+  
+  output:
+    console:
+      enabled: true
+      format: text
+  
+  # Event hooks configuration
+  integration:
+    hooks:
+      # Hook 1: Alert on interface down
+      - name: "interface_down_alert"
+        script: "/usr/local/bin/alert-interface-down.sh"
+        condition: "message_type == 17"  # RTM_DELLINK
+        timeout_ms: 5000
+        enabled: true
+        async: true
+      
+      # Hook 2: Log critical events
+      - name: "critical_event_logger"
+        script: "/usr/local/bin/log-critical-event.sh"
+        condition: "event_type == 1"
+        timeout_ms: 3000
+        enabled: true
+        async: false
+      
+      # Hook 3: Monitor VETH interfaces (container events)
+      - name: "container_event_monitor"
+        script: "/usr/local/bin/monitor-container.sh"
+        condition: "interface =~ 'veth.*'"
+        timeout_ms: 10000
+        enabled: true
+        async: true
+      
+      # Hook 4: Execute on any interface up event
+      - name: "interface_up_handler"
+        script: "/usr/local/bin/handle-interface-up.sh"
+        condition: "message_type == 16"  # RTM_NEWLINK
+        timeout_ms: 5000
+        enabled: false  # Disabled by default
+        async: true
+      
+      # Hook 5: Custom network event processor
+      - name: "custom_processor"
+        script: "/opt/nlmon/scripts/process-event.py"
+        condition: ""  # Empty condition matches all events
+        timeout_ms: 2000
+        enabled: false
+        async: true
+
+# Example hook scripts:
+#
+# /usr/local/bin/alert-interface-down.sh:
+# #!/bin/bash
+# # Environment variables available:
+# # NLMON_TIMESTAMP, NLMON_SEQUENCE, NLMON_EVENT_TYPE,
+# # NLMON_MESSAGE_TYPE, NLMON_INTERFACE
+# 
+# echo "Interface down: $NLMON_INTERFACE at $(date -d @$((NLMON_TIMESTAMP/1000)))"
+# # Send alert via email, webhook, etc.
+# curl -X POST https://alerts.example.com/webhook \
+#   -d "interface=$NLMON_INTERFACE&event=down"
+#
+# /usr/local/bin/log-critical-event.sh:
+# #!/bin/bash
+# logger -t nlmon "Critical event: type=$NLMON_EVENT_TYPE msg=$NLMON_MESSAGE_TYPE iface=$NLMON_INTERFACE"
+#
+# /usr/local/bin/monitor-container.sh:
+# #!/bin/bash
+# # Correlate VETH interface with container
+# CONTAINER_ID=$(docker ps --filter "network=container:$NLMON_INTERFACE" --format "{{.ID}}")
+# if [ -n "$CONTAINER_ID" ]; then
+#   echo "Container event: $CONTAINER_ID on $NLMON_INTERFACE"
+# fi

@@ -1,0 +1,148 @@
+# Container Monitoring Configuration
+# Optimized for monitoring Docker and Kubernetes container networking
+
+nlmon:
+  # Core settings
+  core:
+    buffer_size: 512KB
+    max_events: 20000
+    rate_limit: 2000
+    worker_threads: 4
+    log_level: info
+  
+  # Monitoring configuration focused on container interfaces
+  monitoring:
+    protocols:
+      - NETLINK_ROUTE
+    
+    # Focus on container-related interfaces
+    interfaces:
+      include: ["veth*", "docker*", "br-*", "cni*"]
+      exclude: ["lo"]
+    
+    # All message types for comprehensive container monitoring
+    message_types: []
+    
+    # Enable namespace monitoring for container isolation
+    namespaces:
+      enabled: true
+      filter: []                # Monitor all namespaces
+  
+  # Named filters for container events
+  filters:
+    - name: "container_interfaces"
+      expression: "interface =~ 'veth.*'"
+      enabled: true
+    
+    - name: "docker_networks"
+      expression: "interface =~ 'docker.*' OR interface =~ 'br-.*'"
+      enabled: false
+    
+    - name: "pod_events"
+      expression: "namespace != 'default'"
+      enabled: false
+  
+  # Output configuration
+  output:
+    console:
+      enabled: true
+      format: text
+      color: true
+    
+    # JSON export for container event analysis
+    json:
+      enabled: true
+      file: "/var/log/nlmon/container_events.json"
+      pretty: true              # Pretty print for readability
+      rotate_size: 50MB
+      rotate_count: 5
+    
+    # Database for historical analysis
+    database:
+      enabled: true
+      path: "/var/lib/nlmon/container_events.db"
+      retention_days: 30
+      batch_size: 100
+  
+  # CLI settings
+  cli:
+    enabled: true
+    refresh_rate: 100ms
+    max_history: 2000
+    show_timestamps: true
+    timestamp_format: "15:04:05.000"
+  
+  # Web dashboard for remote monitoring
+  web:
+    enabled: true
+    host: "0.0.0.0"
+    port: 8080
+    tls:
+      enabled: false            # Enable in production
+    auth:
+      enabled: false            # Enable in production
+  
+  # Metrics for Prometheus integration
+  metrics:
+    enabled: true
+    host: "0.0.0.0"
+    port: 9090
+    path: "/metrics"
+  
+  # Enable container integration plugins
+  plugins:
+    directory: "/usr/lib/nlmon/plugins"
+    enabled:
+      - kubernetes
+      - docker
+    config:
+      kubernetes:
+        kubeconfig: "${HOME}/.kube/config"
+        cache_ttl: 300
+        enrich_events: true
+      docker:
+        socket: "/var/run/docker.sock"
+        timeout: 5s
+        enrich_events: true
+  
+  # Alerts for container networking issues
+  alerts:
+    - name: "pod_interface_down"
+      condition: "event.type == 'RTM_DELLINK' AND interface =~ 'veth.*'"
+      severity: warning
+      actions:
+        - type: log
+          file: "/var/log/nlmon/container_alerts.log"
+        - type: webhook
+          url: "${ALERT_WEBHOOK_URL}"
+    
+    - name: "high_container_churn"
+      condition: "rate(RTM_NEWLINK, interface =~ 'veth.*') > 10"
+      severity: info
+      actions:
+        - type: log
+          file: "/var/log/nlmon/container_alerts.log"
+  
+  # Integration settings
+  integration:
+    kubernetes:
+      enabled: true
+      kubeconfig: "${HOME}/.kube/config"
+      context: ""
+      enrich_events: true
+      cache_ttl: 300
+    
+    docker:
+      enabled: true
+      socket: "/var/run/docker.sock"
+      timeout: 5s
+      enrich_events: true
+    
+    hooks:
+      - name: "container_lifecycle"
+        events: ["RTM_NEWLINK", "RTM_DELLINK"]
+        script: "/usr/local/bin/container_hook.sh"
+        timeout: 10s
+        environment:
+          NOTIFY_SLACK: "true"
+          SLACK_CHANNEL: "#container-events"

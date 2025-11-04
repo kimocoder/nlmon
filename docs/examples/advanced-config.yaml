@@ -1,0 +1,251 @@
+# Advanced nlmon Configuration
+# This configuration demonstrates advanced features including filtering,
+# multiple outputs, web dashboard, and plugin integration
+
+nlmon:
+  # Core event processing settings
+  core:
+    buffer_size: 1MB            # Larger buffer for high-traffic environments
+    max_events: 50000           # Keep more events in memory
+    rate_limit: 5000            # Higher rate limit
+    worker_threads: 8           # More workers for parallel processing
+    log_level: warning          # Less verbose logging
+  
+  # Monitoring configuration
+  monitoring:
+    # Monitor multiple netlink protocols
+    protocols:
+      - NETLINK_ROUTE
+      - NETLINK_GENERIC
+      - NETLINK_SOCK_DIAG
+    
+    # Interface filtering with patterns
+    interfaces:
+      include: ["eth*", "bond*", "vlan*"]
+      exclude: ["lo", "docker*", "veth*"]
+    
+    # Specific message types
+    message_types:
+      - RTM_NEWLINK
+      - RTM_DELLINK
+      - RTM_NEWADDR
+      - RTM_DELADDR
+      - RTM_NEWROUTE
+      - RTM_DELROUTE
+    
+    # Enable namespace monitoring
+    namespaces:
+      enabled: true
+      filter: []                # Monitor all namespaces
+  
+  # Named filter definitions
+  filters:
+    - name: "critical_interfaces"
+      expression: "interface IN ['eth0', 'eth1'] AND state == 'DOWN'"
+      enabled: true
+    
+    - name: "routing_changes"
+      expression: "message_type IN [RTM_NEWROUTE, RTM_DELROUTE]"
+      enabled: false
+    
+    - name: "link_state_changes"
+      expression: "message_type IN [RTM_NEWLINK, RTM_DELLINK]"
+      enabled: false
+  
+  # Output configuration
+  output:
+    # Console output
+    console:
+      enabled: true
+      format: text
+      color: true
+    
+    # PCAP export with rotation
+    pcap:
+      enabled: true
+      file: "/var/log/nlmon/capture.pcap"
+      rotate_size: 500MB        # Rotate when file reaches 500MB
+      rotate_count: 10          # Keep 10 rotated files
+      compress: true            # Compress rotated files
+    
+    # JSON export
+    json:
+      enabled: true
+      file: "/var/log/nlmon/events.json"
+      pretty: false             # Compact JSON for efficiency
+      rotate_size: 100MB
+      rotate_count: 5
+    
+    # Database storage with retention
+    database:
+      enabled: true
+      path: "/var/lib/nlmon/events.db"
+      retention_days: 90        # Keep events for 90 days
+      batch_size: 100           # Batch inserts for performance
+    
+    # Syslog forwarding
+    syslog:
+      enabled: true
+      server: "syslog.example.com:514"
+      protocol: tcp             # tcp, udp, or tls
+      facility: local0
+      severity: info
+  
+  # CLI interface settings
+  cli:
+    enabled: true
+    refresh_rate: 50ms          # Faster refresh for busy systems
+    max_history: 5000           # More history
+    theme: default
+    show_timestamps: true
+    timestamp_format: "2006-01-02 15:04:05.000"
+    panels:
+      events: true
+      details: true
+      stats: true
+      filters: true
+  
+  # Web dashboard
+  web:
+    enabled: true
+    host: "0.0.0.0"
+    port: 8080
+    tls:
+      enabled: true
+      cert: "/etc/nlmon/cert.pem"
+      key: "/etc/nlmon/key.pem"
+    auth:
+      enabled: true
+      type: jwt
+      users:
+        - username: admin
+          password_hash: "$2a$10$..."  # bcrypt hash
+          role: admin
+        - username: viewer
+          password_hash: "$2a$10$..."
+          role: viewer
+    cors:
+      enabled: true
+      origins: ["https://dashboard.example.com"]
+    rate_limit:
+      enabled: true
+      requests_per_minute: 100
+  
+  # Prometheus metrics
+  metrics:
+    enabled: true
+    host: "0.0.0.0"
+    port: 9090
+    path: "/metrics"
+    include:
+      - event_counters
+      - processing_time
+      - memory_usage
+      - cpu_usage
+  
+  # Plugin system
+  plugins:
+    directory: "/usr/lib/nlmon/plugins"
+    enabled:
+      - kubernetes
+      - docker
+      - custom_exporter
+    config:
+      kubernetes:
+        kubeconfig: "~/.kube/config"
+        cache_ttl: 300
+      docker:
+        socket: "/var/run/docker.sock"
+        timeout: 5s
+  
+  # Alert rules
+  alerts:
+    - name: "critical_interface_down"
+      condition: "event.type == 'RTM_DELLINK' AND interface IN ['eth0', 'eth1']"
+      severity: critical
+      actions:
+        - type: exec
+          command: "/usr/local/bin/alert.sh"
+        - type: webhook
+          url: "https://alerts.example.com/webhook"
+          headers:
+            Authorization: "Bearer ${WEBHOOK_TOKEN}"
+        - type: log
+          file: "/var/log/nlmon/alerts.log"
+      rate_limit: "1/5m"        # Max 1 alert per 5 minutes
+    
+    - name: "arp_flood_detection"
+      condition: "rate(RTM_NEWNEIGH) > 100"
+      severity: warning
+      actions:
+        - type: log
+          file: "/var/log/nlmon/security.log"
+        - type: snmp_trap
+          community: public
+          receivers: ["192.168.1.10:162"]
+    
+    - name: "promiscuous_mode_enabled"
+      condition: "event.flags CONTAINS 'PROMISC'"
+      severity: high
+      actions:
+        - type: exec
+          command: "/usr/local/bin/security_alert.sh"
+  
+  # Integration settings
+  integration:
+    kubernetes:
+      enabled: true
+      kubeconfig: "~/.kube/config"
+      context: ""               # Use default context
+      enrich_events: true       # Add pod metadata to events
+      cache_ttl: 300
+    
+    docker:
+      enabled: true
+      socket: "/var/run/docker.sock"
+      timeout: 5s
+      enrich_events: true
+    
+    snmp:
+      enabled: true
+      version: "2c"
+      community: "public"
+      trap_receivers:
+        - host: "192.168.1.10"
+          port: 162
+    
+    hooks:
+      - name: "interface_change_notification"
+        events: ["RTM_NEWLINK", "RTM_DELLINK"]
+        script: "/usr/local/bin/interface_hook.sh"
+        timeout: 10s
+        environment:
+          ALERT_EMAIL: "admin@example.com"
+          SLACK_WEBHOOK: "${SLACK_WEBHOOK_URL}"
+  
+  # Security settings
+  security:
+    audit_log:
+      enabled: true
+      file: "/var/log/nlmon/audit.log"
+      hash_chain: true          # Cryptographic hash chaining
+      rotate_size: 100MB
+    
+    detectors:
+      promiscuous_mode: true
+      arp_flood: true
+      route_hijack: true
+    
+    access_control:
+      enabled: true
+      roles:
+        - name: admin
+          permissions: ["read", "write", "config"]
+        - name: viewer
+          permissions: ["read"]
+    
+    tls:
+      min_version: "1.3"
+      ciphers:
+        - "TLS_AES_256_GCM_SHA384"
+        - "TLS_CHACHA20_POLY1305_SHA256"

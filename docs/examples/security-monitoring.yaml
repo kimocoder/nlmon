@@ -1,0 +1,231 @@
+# Security Monitoring Configuration
+# Focused on detecting and logging security-relevant network events
+
+nlmon:
+  # Core settings
+  core:
+    buffer_size: 512KB
+    max_events: 25000
+    rate_limit: 3000
+    worker_threads: 4
+    log_level: info
+  
+  # Monitoring configuration
+  monitoring:
+    protocols:
+      - NETLINK_ROUTE
+      - NETLINK_SOCK_DIAG       # Socket diagnostics for connection tracking
+    
+    # Monitor all interfaces for security events
+    interfaces:
+      include: ["*"]
+      exclude: []
+    
+    message_types: []           # Capture all message types
+    
+    namespaces:
+      enabled: true
+      filter: []
+  
+  # Security-focused filters
+  filters:
+    - name: "promiscuous_mode"
+      expression: "event.flags CONTAINS 'PROMISC'"
+      enabled: true
+    
+    - name: "interface_state_changes"
+      expression: "message_type IN [RTM_NEWLINK, RTM_DELLINK]"
+      enabled: true
+    
+    - name: "neighbor_table_changes"
+      expression: "message_type IN [RTM_NEWNEIGH, RTM_DELNEIGH]"
+      enabled: true
+  
+  # Output configuration
+  output:
+    console:
+      enabled: true
+      format: text
+      color: true
+    
+    # JSON export for SIEM integration
+    json:
+      enabled: true
+      file: "/var/log/nlmon/security_events.json"
+      pretty: false             # Compact for log aggregation
+      rotate_size: 100MB
+      rotate_count: 10
+    
+    # Database for forensic analysis
+    database:
+      enabled: true
+      path: "/var/lib/nlmon/security_events.db"
+      retention_days: 365       # Keep for 1 year
+      batch_size: 100
+    
+    # Forward to syslog server
+    syslog:
+      enabled: true
+      server: "siem.example.com:514"
+      protocol: tls             # Secure transport
+      facility: local1
+      severity: warning
+  
+  # CLI settings
+  cli:
+    enabled: true
+    refresh_rate: 100ms
+    max_history: 5000
+    show_timestamps: true
+    timestamp_format: "2006-01-02 15:04:05.000"
+  
+  # Web dashboard with authentication
+  web:
+    enabled: true
+    host: "127.0.0.1"           # Localhost only for security
+    port: 8443
+    tls:
+      enabled: true
+      cert: "/etc/nlmon/security/cert.pem"
+      key: "/etc/nlmon/security/key.pem"
+    auth:
+      enabled: true
+      type: jwt
+      users:
+        - username: security_admin
+          password_hash: "$2a$10$..."
+          role: admin
+        - username: security_analyst
+          password_hash: "$2a$10$..."
+          role: viewer
+    cors:
+      enabled: false            # Disable CORS for security
+    rate_limit:
+      enabled: true
+      requests_per_minute: 60
+  
+  # Metrics
+  metrics:
+    enabled: true
+    host: "127.0.0.1"
+    port: 9090
+    path: "/metrics"
+  
+  # Plugins
+  plugins:
+    directory: "/usr/lib/nlmon/plugins"
+    enabled:
+      - security_detector
+    config:
+      security_detector:
+        sensitivity: high
+  
+  # Security alerts
+  alerts:
+    - name: "promiscuous_mode_detected"
+      condition: "event.flags CONTAINS 'PROMISC'"
+      severity: critical
+      actions:
+        - type: exec
+          command: "/usr/local/bin/security_alert.sh promiscuous"
+        - type: log
+          file: "/var/log/nlmon/security_alerts.log"
+        - type: webhook
+          url: "${SECURITY_WEBHOOK_URL}"
+          headers:
+            X-Alert-Type: "promiscuous_mode"
+        - type: snmp_trap
+          community: "${SNMP_COMMUNITY}"
+          receivers: ["${SNMP_RECEIVER}:162"]
+      rate_limit: "1/1m"
+    
+    - name: "arp_flood_attack"
+      condition: "rate(RTM_NEWNEIGH) > 100"
+      severity: critical
+      actions:
+        - type: exec
+          command: "/usr/local/bin/security_alert.sh arp_flood"
+        - type: log
+          file: "/var/log/nlmon/security_alerts.log"
+        - type: webhook
+          url: "${SECURITY_WEBHOOK_URL}"
+          headers:
+            X-Alert-Type: "arp_flood"
+      rate_limit: "1/5m"
+    
+    - name: "suspicious_interface_creation"
+      condition: "event.type == 'RTM_NEWLINK' AND interface =~ 'tap.*|tun.*'"
+      severity: high
+      actions:
+        - type: log
+          file: "/var/log/nlmon/security_alerts.log"
+        - type: webhook
+          url: "${SECURITY_WEBHOOK_URL}"
+          headers:
+            X-Alert-Type: "suspicious_interface"
+      rate_limit: "1/1m"
+    
+    - name: "route_table_modification"
+      condition: "message_type IN [RTM_NEWROUTE, RTM_DELROUTE] AND priority == 'high'"
+      severity: warning
+      actions:
+        - type: log
+          file: "/var/log/nlmon/security_alerts.log"
+      rate_limit: "5/1m"
+  
+  # Integration settings
+  integration:
+    snmp:
+      enabled: true
+      version: "3"              # SNMPv3 for security
+      user: "nlmon_security"
+      auth_protocol: "SHA"
+      auth_password: "${SNMP_AUTH_PASSWORD}"
+      priv_protocol: "AES"
+      priv_password: "${SNMP_PRIV_PASSWORD}"
+      trap_receivers:
+        - host: "${SNMP_RECEIVER}"
+          port: 162
+    
+    hooks:
+      - name: "security_event_handler"
+        events: ["RTM_NEWLINK", "RTM_DELLINK", "RTM_NEWNEIGH"]
+        script: "/usr/local/bin/security_event_handler.sh"
+        timeout: 30s
+        environment:
+          SECURITY_TEAM_EMAIL: "security@example.com"
+          INCIDENT_RESPONSE_URL: "${INCIDENT_RESPONSE_URL}"
+  
+  # Security settings
+  security:
+    # Tamper-evident audit log
+    audit_log:
+      enabled: true
+      file: "/var/log/nlmon/audit.log"
+      hash_chain: true          # Cryptographic hash chaining
+      rotate_size: 500MB
+      rotate_count: 20          # Keep more rotations for compliance
+    
+    # Enable all security detectors
+    detectors:
+      promiscuous_mode: true
+      arp_flood: true
+      route_hijack: true
+    
+    # Strict access control
+    access_control:
+      enabled: true
+      roles:
+        - name: admin
+          permissions: ["read", "write", "config", "audit"]
+        - name: analyst
+          permissions: ["read", "audit"]
+        - name: viewer
+          permissions: ["read"]
+    
+    # Strong TLS configuration
+    tls:
+      min_version: "1.3"
+      ciphers:
+        - "TLS_AES_256_GCM_SHA384"
+        - "TLS_CHACHA20_POLY1305_SHA256"

@@ -1,0 +1,75 @@
+# Basic nlmon Configuration
+# This is a minimal configuration suitable for getting started with nlmon
+
+nlmon:
+  # Core event processing settings
+  core:
+    buffer_size: 320KB          # Event buffer size
+    max_events: 10000           # Maximum events in memory
+    rate_limit: 1000            # Events per second limit
+    worker_threads: 2           # Number of worker threads
+    log_level: info             # Logging level: debug, info, warning, error
+  
+  # Monitoring configuration
+  monitoring:
+    # Netlink protocols to monitor
+    protocols:
+      - NETLINK_ROUTE           # Standard routing messages
+    
+    # Interface filtering
+    interfaces:
+      include: ["*"]            # Monitor all interfaces
+      exclude: []               # No exclusions
+    
+    # Message types to capture (empty = all)
+    message_types: []
+    
+    # Namespace monitoring
+    namespaces:
+      enabled: false            # Disable namespace detection for simplicity
+  
+  # Output configuration
+  output:
+    # Console output
+    console:
+      enabled: true
+      format: text              # text or json
+      color: true               # Enable color output
+    
+    # PCAP export (disabled by default)
+    pcap:
+      enabled: false
+      file: "/var/log/nlmon/capture.pcap"
+    
+    # JSON export (disabled by default)
+    json:
+      enabled: false
+      file: "/var/log/nlmon/events.json"
+    
+    # Database storage (disabled by default)
+    database:
+      enabled: false
+      path: "/var/lib/nlmon/events.db"
+  
+  # CLI interface settings
+  cli:
+    enabled: true
+    refresh_rate: 100ms         # Screen refresh interval
+    max_history: 1000           # Events to keep in display
+    show_timestamps: true
+    timestamp_format: "2006-01-02 15:04:05"
+  
+  # Web dashboard (disabled by default)
+  web:
+    enabled: false
+    port: 8080
+  
+  # Metrics export (disabled by default)
+  metrics:
+    enabled: false
+    port: 9090
+  
+  # Plugin system (disabled by default)
+  plugins:
+    directory: "/usr/lib/nlmon/plugins"
+    enabled: []

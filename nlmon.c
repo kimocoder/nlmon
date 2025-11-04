@@ -59,6 +59,12 @@
 #include <netlink/route/rule.h>
 #include <linux/netlink.h>
 
+/* Memory management and resource tracking */
+#include "memory_tracker.h"
+#include "resource_tracker.h"
+#include "signal_handler.h"
+#include "netlink_multi_protocol.h"
+
 /* CLI mode globals */
 static int cli_mode = 0;
 static WINDOW *main_win = NULL;
@@ -78,9 +84,17 @@ struct stats {
 	unsigned long addr_events;
 	unsigned long neigh_events;
 	unsigned long rule_events;
+	unsigned long generic_events;
+	unsigned long sock_diag_events;
 };
 
 static struct stats event_stats = {0};
+
+/* Memory management and resource tracking */
+static struct memory_tracker *g_memory_tracker = NULL;
+static struct resource_tracker *g_resource_tracker = NULL;
+static struct signal_handler *g_signal_handler = NULL;
+static struct nlmon_multi_protocol_ctx *g_multi_proto_ctx = NULL;
 
 struct context {
 	struct nl_sock        *ns;
@@ -185,17 +199,15 @@ static int create_nlmon_device(const char *dev_name)
 	
 	err = nl_connect(sk, NETLINK_ROUTE);
 	if (err < 0) {
-		warnx("Failed to connect to netlink: %s", nl_geterror(err));
+		warnx("Failed to connect to netlink: %s", strerror(-err));
 		nl_socket_free(sk);
 		return -1;
 	}
 	
 	/* Check if device already exists */
-	struct rtnl_link *existing_link = NULL;
-	err = rtnl_link_get_kernel(sk, 0, dev_name, &existing_link);
-	if (err == 0 && existing_link) {
+	err = rtnl_link_get_kernel(sk, 0, dev_name, &link);
+	if (err == 0 && link) {
 		/* Device exists, use it */
-		link = existing_link;
 		if (verbose_mode)
 			log_event("nlmon device already exists");
 	} else {
@@ -212,7 +224,7 @@ static int create_nlmon_device(const char *dev_name)
 		
 		err = rtnl_link_add(sk, link, NLM_F_CREATE | NLM_F_EXCL);
 		if (err < 0) {
-			warnx("Failed to create nlmon device: %s", nl_geterror(err));
+			warnx("Failed to create nlmon device: %s", strerror(-err));
 			rtnl_link_put(link);
 			nl_socket_free(sk);
 			return -1;
@@ -227,7 +239,7 @@ static int create_nlmon_device(const char *dev_name)
 		/* Get the newly created link */
 		err = rtnl_link_get_kernel(sk, 0, dev_name, &link);
 		if (err < 0 || !link) {
-			warnx("Failed to get link for device %s: %s", dev_name, nl_geterror(err));
+			warnx("Failed to get link for device %s: %s", dev_name, strerror(-err));
 			nl_socket_free(sk);
 			return -1;
 		}
@@ -246,7 +258,7 @@ static int create_nlmon_device(const char *dev_name)
 	
 	err = rtnl_link_change(sk, link, change, 0);
 	if (err < 0) {
-		warnx("Failed to bring up nlmon device: %s", nl_geterror(err));
+		warnx("Failed to bring up nlmon device: %s", strerror(-err));
 		rtnl_link_put(change);
 		rtnl_link_put(link);
 		nl_socket_free(sk);
@@ -371,6 +383,50 @@ static void write_pcap_packet(const unsigned char *data, size_t len)
 	}
 	
 	fflush(pcap_fp);
+}
+
+/* Generic netlink event callback */
+static void genetlink_event_cb(nlmon_event_type_t type, void *data, void *user_data)
+{
+	char buf[256];
+	
+	(void)user_data;
+	
+	switch (type) {
+	case NLMON_EVENT_GENERIC: {
+		struct nlmon_generic_msg *msg = data;
+		snprintf(buf, sizeof(buf), "genetlink: family=%s cmd=%u version=%u",
+		         msg->family_name, msg->cmd, msg->version);
+		event_stats.generic_events++;
+		log_event(buf);
+		break;
+	}
+	case NLMON_EVENT_SOCK_DIAG: {
+		struct nlmon_sock_diag *diag = data;
+		snprintf(buf, sizeof(buf), "sock_diag: %s:%u -> %s:%u state=%u proto=%u",
+		         diag->src_addr, diag->src_port,
+		         diag->dst_addr, diag->dst_port,
+		         diag->state, diag->protocol);
+		event_stats.sock_diag_events++;
+		log_event(buf);
+		break;
+	}
+	default:
+		break;
+	}
+}
+
+/* Generic netlink I/O callback */
+static void genetlink_io_cb(struct ev_loop *loop, ev_io *w, int revents)
+{
+	(void)loop;
+	(void)revents;
+	
+	nlmon_protocol_t proto = (nlmon_protocol_t)(intptr_t)w->data;
+	
+	if (g_multi_proto_ctx) {
+		nlmon_multi_protocol_process(g_multi_proto_ctx, proto);
+	}
 }
 
 static void nlmon_packet_cb(struct ev_loop *loop, ev_io *w, int revents)
@@ -693,12 +749,14 @@ static void refresh_cli_display(void)
 	werase(status_win);
 	box(status_win, 0, 0);
 	mvwprintw(status_win, 0, 2, " Statistics ");
-	mvwprintw(status_win, 1, 2, "Links: %-8lu Routes: %-8lu Addrs: %-8lu", 
-	          event_stats.link_events, event_stats.route_events, event_stats.addr_events);
-	mvwprintw(status_win, 2, 2, "Neigh: %-8lu Rules:  %-8lu Total: %-8lu",
-	          event_stats.neigh_events, event_stats.rule_events,
+	mvwprintw(status_win, 1, 2, "Links: %-8lu Routes: %-8lu Addrs: %-8lu Genl: %-8lu", 
+	          event_stats.link_events, event_stats.route_events, event_stats.addr_events,
+	          event_stats.generic_events);
+	mvwprintw(status_win, 2, 2, "Neigh: %-8lu Rules:  %-8lu Diag:  %-8lu Total: %-8lu",
+	          event_stats.neigh_events, event_stats.rule_events, event_stats.sock_diag_events,
 	          event_stats.link_events + event_stats.route_events + 
-	          event_stats.addr_events + event_stats.neigh_events + event_stats.rule_events);
+	          event_stats.addr_events + event_stats.neigh_events + event_stats.rule_events +
+	          event_stats.generic_events + event_stats.sock_diag_events);
 	wrefresh(status_win);
 	
 	/* Update command window */
@@ -745,6 +803,48 @@ static void cleanup_cli(void)
 	if (cmd_win)
 		delwin(cmd_win);
 	endwin();
+}
+
+/* Cleanup memory management and resource tracking */
+static void cleanup_memory_management(void)
+{
+	/* Dump memory statistics if tracker is enabled */
+	if (g_memory_tracker) {
+		memory_tracker_update_system_stats(g_memory_tracker);
+		if (verbose_mode) {
+			fprintf(stderr, "\n");
+			memory_tracker_dump(g_memory_tracker, STDERR_FILENO);
+		}
+		memory_tracker_destroy(g_memory_tracker);
+		g_memory_tracker = NULL;
+	}
+	
+	/* Cleanup all tracked resources */
+	if (g_resource_tracker) {
+		if (verbose_mode) {
+			struct resource_stats stats;
+			if (resource_tracker_get_stats(g_resource_tracker, &stats)) {
+				fprintf(stderr, "Resource statistics:\n");
+				fprintf(stderr, "  Events processed: %lu\n", stats.events_processed);
+				fprintf(stderr, "  Events dropped: %lu\n", stats.events_dropped);
+				fprintf(stderr, "  Peak memory RSS: %lu bytes\n", stats.memory_peak_rss_bytes);
+			}
+		}
+		resource_tracker_destroy(g_resource_tracker);
+		g_resource_tracker = NULL;
+	}
+	
+	/* Cleanup signal handler */
+	if (g_signal_handler) {
+		signal_handler_cleanup(g_signal_handler);
+		g_signal_handler = NULL;
+	}
+	
+	/* Cleanup multi-protocol context */
+	if (g_multi_proto_ctx) {
+		nlmon_multi_protocol_destroy(g_multi_proto_ctx);
+		g_multi_proto_ctx = NULL;
+	}
 }
 
 static void show_help(void)
@@ -800,6 +900,7 @@ static void handle_cli_input(void)
 	case 'q':
 	case 'Q':
 		cleanup_cli();
+		cleanup_memory_management();
 		exit(0);
 		break;
 	case 'h':
@@ -1035,6 +1136,22 @@ int main(int argc, char *argv[])
 
 	/* Initialize context */
 	memset(&ctx, 0, sizeof(ctx));
+	
+	/* Initialize memory management and resource tracking */
+	g_memory_tracker = memory_tracker_create(true);
+	if (!g_memory_tracker) {
+		warnx("Failed to create memory tracker");
+	}
+	
+	g_resource_tracker = resource_tracker_create(true);
+	if (!g_resource_tracker) {
+		warnx("Failed to create resource tracker");
+	}
+	
+	g_signal_handler = signal_handler_init();
+	if (!g_signal_handler) {
+		warnx("Failed to initialize signal handler");
+	}
 
 	while ((c = getopt(argc, argv, "h?vciauVm:p:f:gA")) != EOF) {
 		switch (c) {
@@ -1135,6 +1252,34 @@ int main(int argc, char *argv[])
 	if (cli_mode)
 		init_cli();
 
+	/* Initialize multi-protocol support if requested */
+	if (show_generic_netlink || show_all_protocols) {
+		g_multi_proto_ctx = nlmon_multi_protocol_init();
+		if (!g_multi_proto_ctx) {
+			warnx("Failed to initialize multi-protocol support");
+		} else {
+			nlmon_multi_protocol_set_callback(g_multi_proto_ctx, genetlink_event_cb, NULL);
+			
+			if (show_generic_netlink || show_all_protocols) {
+				if (nlmon_multi_protocol_enable(g_multi_proto_ctx, NLMON_PROTO_GENERIC) == 0) {
+					if (verbose_mode)
+						log_event("NETLINK_GENERIC monitoring enabled");
+				} else {
+					warnx("Failed to enable NETLINK_GENERIC monitoring");
+				}
+			}
+			
+			if (show_all_protocols) {
+				if (nlmon_multi_protocol_enable(g_multi_proto_ctx, NLMON_PROTO_SOCK_DIAG) == 0) {
+					if (verbose_mode)
+						log_event("NETLINK_SOCK_DIAG monitoring enabled");
+				} else {
+					warnx("Failed to enable NETLINK_SOCK_DIAG monitoring");
+				}
+			}
+		}
+	}
+
 	ctx.ns = nl_socket_alloc();
 	assert(ctx.ns);
 	nl_socket_set_nonblocking(ctx.ns);
@@ -1150,6 +1295,7 @@ int main(int argc, char *argv[])
 			cleanup_cli();
 		nl_cache_mngr_free(ctx.mngr);
 		nl_socket_free(ctx.ns);
+		cleanup_memory_management();
 		return 1;
 	}
 
@@ -1179,6 +1325,24 @@ int main(int argc, char *argv[])
 		ev_io_init(&nlmon_io, nlmon_packet_cb, nlmon_sock, EV_READ);
 		ev_io_start(loop, &nlmon_io);
 	}
+	
+	/* Initialize genetlink watchers if enabled */
+	ev_io genetlink_io, sock_diag_io;
+	if (g_multi_proto_ctx) {
+		int genl_fd = nlmon_multi_protocol_get_fd(g_multi_proto_ctx, NLMON_PROTO_GENERIC);
+		if (genl_fd >= 0) {
+			ev_io_init(&genetlink_io, genetlink_io_cb, genl_fd, EV_READ);
+			genetlink_io.data = (void *)(intptr_t)NLMON_PROTO_GENERIC;
+			ev_io_start(loop, &genetlink_io);
+		}
+		
+		int diag_fd = nlmon_multi_protocol_get_fd(g_multi_proto_ctx, NLMON_PROTO_SOCK_DIAG);
+		if (diag_fd >= 0) {
+			ev_io_init(&sock_diag_io, genetlink_io_cb, diag_fd, EV_READ);
+			sock_diag_io.data = (void *)(intptr_t)NLMON_PROTO_SOCK_DIAG;
+			ev_io_start(loop, &sock_diag_io);
+		}
+	}
 
 	/* Start event loop, remain there until ev_unloop() is called. */
 	ev_run(loop, 0);
@@ -1191,6 +1355,9 @@ int main(int argc, char *argv[])
 		close(nlmon_sock);
 	if (pcap_fp)
 		fclose(pcap_fp);
+	
+	/* Cleanup memory management and resource tracking */
+	cleanup_memory_management();
 
 	return 0;
 }

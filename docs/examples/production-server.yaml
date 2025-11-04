@@ -1,0 +1,232 @@
+# Production Server Configuration
+# Optimized for production environments with high reliability and performance
+
+nlmon:
+  # Core settings optimized for production
+  core:
+    buffer_size: 2MB            # Large buffer for burst traffic
+    max_events: 100000          # Keep extensive history
+    rate_limit: 10000           # High rate limit for busy servers
+    worker_threads: 16          # More workers for high throughput
+    log_level: warning          # Minimal logging overhead
+  
+  # Monitoring configuration
+  monitoring:
+    protocols:
+      - NETLINK_ROUTE
+    
+    # Monitor production interfaces
+    interfaces:
+      include: ["eth*", "bond*", "vlan*"]
+      exclude: ["lo", "docker*", "veth*"]
+    
+    # Focus on critical message types
+    message_types:
+      - RTM_NEWLINK
+      - RTM_DELLINK
+      - RTM_NEWADDR
+      - RTM_DELADDR
+      - RTM_NEWROUTE
+      - RTM_DELROUTE
+    
+    namespaces:
+      enabled: false            # Disable for performance
+  
+  # Production filters
+  filters:
+    - name: "production_interfaces"
+      expression: "interface IN ['eth0', 'eth1', 'bond0']"
+      enabled: true
+    
+    - name: "critical_events"
+      expression: "message_type IN [RTM_DELLINK, RTM_DELADDR] AND interface IN ['eth0', 'eth1']"
+      enabled: true
+  
+  # Output configuration
+  output:
+    # Disable console in daemon mode
+    console:
+      enabled: false
+    
+    # PCAP with aggressive rotation
+    pcap:
+      enabled: true
+      file: "/var/log/nlmon/production.pcap"
+      rotate_size: 1GB
+      rotate_count: 20
+      compress: true
+    
+    # JSON for log aggregation
+    json:
+      enabled: true
+      file: "/var/log/nlmon/production.json"
+      pretty: false
+      rotate_size: 500MB
+      rotate_count: 10
+    
+    # Database with retention policy
+    database:
+      enabled: true
+      path: "/var/lib/nlmon/production.db"
+      retention_days: 180       # 6 months retention
+      batch_size: 500           # Large batches for performance
+    
+    # Forward to centralized syslog
+    syslog:
+      enabled: true
+      server: "logs.example.com:6514"
+      protocol: tls
+      facility: local0
+      severity: info
+  
+  # CLI disabled for daemon mode
+  cli:
+    enabled: false
+  
+  # Web dashboard with full security
+  web:
+    enabled: true
+    host: "0.0.0.0"
+    port: 8443
+    tls:
+      enabled: true
+      cert: "/etc/nlmon/ssl/cert.pem"
+      key: "/etc/nlmon/ssl/key.pem"
+    auth:
+      enabled: true
+      type: jwt
+      users:
+        - username: ops_admin
+          password_hash: "$2a$10$..."
+          role: admin
+        - username: ops_viewer
+          password_hash: "$2a$10$..."
+          role: viewer
+    cors:
+      enabled: true
+      origins: ["https://monitoring.example.com"]
+    rate_limit:
+      enabled: true
+      requests_per_minute: 200
+  
+  # Prometheus metrics for monitoring
+  metrics:
+    enabled: true
+    host: "0.0.0.0"
+    port: 9090
+    path: "/metrics"
+    include:
+      - event_counters
+      - processing_time
+      - memory_usage
+      - cpu_usage
+      - queue_depth
+      - error_rate
+  
+  # Plugins
+  plugins:
+    directory: "/usr/lib/nlmon/plugins"
+    enabled:
+      - prometheus_exporter
+      - custom_metrics
+    config:
+      prometheus_exporter:
+        additional_labels:
+          environment: production
+          datacenter: us-east-1
+          server: "${HOSTNAME}"
+  
+  # Production alerts
+  alerts:
+    - name: "primary_interface_down"
+      condition: "event.type == 'RTM_DELLINK' AND interface IN ['eth0', 'bond0']"
+      severity: critical
+      actions:
+        - type: exec
+          command: "/usr/local/bin/pagerduty_alert.sh critical"
+        - type: webhook
+          url: "${PAGERDUTY_WEBHOOK_URL}"
+          headers:
+            Authorization: "Token ${PAGERDUTY_TOKEN}"
+        - type: log
+          file: "/var/log/nlmon/critical_alerts.log"
+      rate_limit: "1/1m"
+    
+    - name: "interface_flapping"
+      condition: "rate(RTM_NEWLINK, interface IN ['eth0', 'eth1']) > 5"
+      severity: critical
+      actions:
+        - type: exec
+          command: "/usr/local/bin/pagerduty_alert.sh critical"
+        - type: webhook
+          url: "${PAGERDUTY_WEBHOOK_URL}"
+        - type: log
+          file: "/var/log/nlmon/critical_alerts.log"
+      rate_limit: "1/5m"
+    
+    - name: "high_event_rate"
+      condition: "rate(ALL_EVENTS) > 5000"
+      severity: warning
+      actions:
+        - type: log
+          file: "/var/log/nlmon/performance_alerts.log"
+        - type: webhook
+          url: "${SLACK_WEBHOOK_URL}"
+      rate_limit: "1/10m"
+    
+    - name: "memory_pressure"
+      condition: "memory_usage > 80"
+      severity: warning
+      actions:
+        - type: log
+          file: "/var/log/nlmon/performance_alerts.log"
+      rate_limit: "1/5m"
+  
+  # Integration settings
+  integration:
+    snmp:
+      enabled: true
+      version: "2c"
+      community: "${SNMP_COMMUNITY}"
+      trap_receivers:
+        - host: "nms.example.com"
+          port: 162
+    
+    hooks:
+      - name: "production_event_handler"
+        events: ["RTM_DELLINK"]
+        script: "/usr/local/bin/production_alert.sh"
+        timeout: 30s
+        environment:
+          ONCALL_WEBHOOK: "${ONCALL_WEBHOOK_URL}"
+          ENVIRONMENT: "production"
+  
+  # Security settings
+  security:
+    audit_log:
+      enabled: true
+      file: "/var/log/nlmon/audit.log"
+      hash_chain: true
+      rotate_size: 1GB
+      rotate_count: 50          # Long retention for compliance
+    
+    detectors:
+      promiscuous_mode: true
+      arp_flood: true
+      route_hijack: true
+    
+    access_control:
+      enabled: true
+      roles:
+        - name: admin
+          permissions: ["read", "write", "config"]
+        - name: operator
+          permissions: ["read", "write"]
+        - name: viewer
+          permissions: ["read"]
+    
+    tls:
+      min_version: "1.3"
+      ciphers:
+        - "TLS_AES_256_GCM_SHA384"
+        - "TLS_CHACHA20_POLY1305_SHA256"

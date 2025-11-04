@@ -1,0 +1,450 @@
+.TH NLMON.CONF 5 "November 2025" "nlmon 2.0" "File Formats"
+.SH NAME
+nlmon.conf \- configuration file for nlmon network monitor
+.SH SYNOPSIS
+.I /etc/nlmon/nlmon.yaml
+.br
+.I ~/.nlmon/config.yaml
+.SH DESCRIPTION
+The
+.B nlmon.conf
+file configures the nlmon network monitoring tool. The configuration file uses YAML format and supports hierarchical configuration with multiple sections.
+
+Configuration files are read in the following order, with later files overriding earlier ones:
+.IP 1. 4
+/etc/nlmon/nlmon.yaml (system-wide)
+.IP 2. 4
+~/.nlmon/config.yaml (user-specific)
+.IP 3. 4
+File specified with \-\-config option
+
+Configuration values can also be overridden using environment variables with the NLMON_ prefix.
+.SH FILE FORMAT
+The configuration file is in YAML format with the following top-level sections:
+.IP \(bu 2
+.B core
+\- Core event processing settings
+.IP \(bu 2
+.B monitoring
+\- Event capture and filtering settings
+.IP \(bu 2
+.B filters
+\- Named filter definitions
+.IP \(bu 2
+.B output
+\- Output format and destination settings
+.IP \(bu 2
+.B cli
+\- CLI interface settings
+.IP \(bu 2
+.B web
+\- Web dashboard settings
+.IP \(bu 2
+.B metrics
+\- Prometheus metrics settings
+.IP \(bu 2
+.B plugins
+\- Plugin system settings
+.IP \(bu 2
+.B alerts
+\- Alert rule definitions
+.IP \(bu 2
+.B integration
+\- External system integration settings
+.IP \(bu 2
+.B security
+\- Security and audit settings
+.SH CONFIGURATION SECTIONS
+.SS Core Settings
+.nf
+nlmon:
+  core:
+    buffer_size: 320KB          # Event buffer size
+    max_events: 10000           # Maximum events in memory
+    rate_limit: 1000            # Events per second limit
+    worker_threads: 4           # Number of worker threads
+    log_level: info             # debug, info, warning, error
+.fi
+.SS Monitoring Settings
+.nf
+nlmon:
+  monitoring:
+    protocols:                  # Netlink protocols to monitor
+      - NETLINK_ROUTE
+      - NETLINK_GENERIC
+      - NETLINK_SOCK_DIAG
+    interfaces:
+      include: ["eth*", "veth*"] # Interface patterns to include
+      exclude: ["lo"]            # Interface patterns to exclude
+    message_types:              # RTM message types to capture
+      - RTM_NEWLINK
+      - RTM_DELLINK
+      - RTM_NEWADDR
+      - RTM_DELADDR
+      - RTM_NEWROUTE
+      - RTM_DELROUTE
+    namespaces:
+      enabled: true             # Enable namespace detection
+      filter: []                # Specific namespaces to monitor
+.fi
+.SS Filter Definitions
+.nf
+nlmon:
+  filters:
+    - name: "container_events"
+      expression: "interface =~ 'veth.*'"
+      enabled: true
+    - name: "link_changes"
+      expression: "message_type IN [RTM_NEWLINK, RTM_DELLINK]"
+      enabled: true
+    - name: "critical_interfaces"
+      expression: "interface IN ['eth0', 'eth1'] AND state == 'DOWN'"
+      enabled: true
+.fi
+.SS Output Settings
+.nf
+nlmon:
+  output:
+    console:
+      enabled: true
+      format: text              # text, json
+      color: true               # Enable color output
+    pcap:
+      enabled: true
+      file: "/var/log/nlmon/capture.pcap"
+      rotate_size: 100MB        # Rotate when file reaches size
+      rotate_count: 5           # Keep N rotated files
+      compress: true            # Compress rotated files
+    json:
+      enabled: false
+      file: "/var/log/nlmon/events.json"
+      pretty: false             # Pretty-print JSON
+      rotate_size: 50MB
+    database:
+      enabled: true
+      path: "/var/lib/nlmon/events.db"
+      retention_days: 30        # Delete events older than N days
+      batch_size: 100           # Batch inserts for performance
+    syslog:
+      enabled: false
+      server: "syslog.example.com:514"
+      protocol: tcp             # tcp, udp, tls
+      facility: local0
+      severity: info
+.fi
+.SS CLI Settings
+.nf
+nlmon:
+  cli:
+    enabled: true
+    refresh_rate: 100ms         # Screen refresh interval
+    max_history: 1000           # Events to keep in display
+    theme: default              # Color theme
+    show_timestamps: true
+    timestamp_format: "2006-01-02 15:04:05.000"
+    panels:
+      events: true              # Show events panel
+      details: true             # Show details panel
+      stats: true               # Show statistics panel
+      filters: true             # Show filters panel
+.fi
+.SS Web Dashboard Settings
+.nf
+nlmon:
+  web:
+    enabled: false
+    host: "0.0.0.0"            # Listen address
+    port: 8080                  # HTTP port
+    tls:
+      enabled: false
+      cert: "/etc/nlmon/cert.pem"
+      key: "/etc/nlmon/key.pem"
+    auth:
+      enabled: false
+      type: jwt                 # jwt, basic
+      users:
+        - username: admin
+          password_hash: "$2a$10$..."
+          role: admin
+    cors:
+      enabled: true
+      origins: ["*"]
+    rate_limit:
+      enabled: true
+      requests_per_minute: 100
+.fi
+.SS Metrics Settings
+.nf
+nlmon:
+  metrics:
+    enabled: true
+    host: "0.0.0.0"
+    port: 9090
+    path: "/metrics"
+    include:
+      - event_counters
+      - processing_time
+      - memory_usage
+      - cpu_usage
+.fi
+.SS Plugin Settings
+.nf
+nlmon:
+  plugins:
+    directory: "/usr/lib/nlmon/plugins"
+    enabled:
+      - kubernetes
+      - docker
+      - custom_exporter
+    disabled:
+      - example_plugin
+    config:
+      kubernetes:
+        kubeconfig: "~/.kube/config"
+        cache_ttl: 300
+      docker:
+        socket: "/var/run/docker.sock"
+        timeout: 5s
+.fi
+.SS Alert Rules
+.nf
+nlmon:
+  alerts:
+    - name: "interface_down"
+      condition: "event.type == 'RTM_DELLINK' AND interface IN ['eth0', 'eth1']"
+      severity: critical
+      actions:
+        - type: exec
+          command: "/usr/local/bin/alert.sh"
+        - type: log
+          file: "/var/log/nlmon/alerts.log"
+        - type: webhook
+          url: "https://alerts.example.com/webhook"
+      rate_limit: "1/5m"        # Max 1 alert per 5 minutes
+      
+    - name: "arp_flood"
+      condition: "rate(RTM_NEWNEIGH) > 100"
+      severity: warning
+      actions:
+        - type: log
+          file: "/var/log/nlmon/security.log"
+      
+    - name: "promiscuous_mode"
+      condition: "event.flags CONTAINS 'PROMISC'"
+      severity: high
+      actions:
+        - type: exec
+          command: "/usr/local/bin/security_alert.sh"
+        - type: snmp_trap
+          community: public
+          receivers: ["192.168.1.10:162"]
+.fi
+.SS Integration Settings
+.nf
+nlmon:
+  integration:
+    kubernetes:
+      enabled: false
+      kubeconfig: "~/.kube/config"
+      context: ""               # Use default context if empty
+      enrich_events: true       # Add pod metadata to events
+      cache_ttl: 300            # Cache pod info for N seconds
+      
+    docker:
+      enabled: false
+      socket: "/var/run/docker.sock"
+      timeout: 5s
+      enrich_events: true
+      
+    snmp:
+      enabled: false
+      version: "2c"             # 2c, 3
+      community: "public"       # For SNMPv2c
+      trap_receivers:
+        - host: "192.168.1.10"
+          port: 162
+      # For SNMPv3:
+      # user: "nlmon"
+      # auth_protocol: "SHA"
+      # auth_password: "authpass"
+      # priv_protocol: "AES"
+      # priv_password: "privpass"
+      
+    hooks:
+      - name: "interface_change"
+        events: ["RTM_NEWLINK", "RTM_DELLINK"]
+        script: "/usr/local/bin/interface_hook.sh"
+        timeout: 10s
+        environment:
+          ALERT_EMAIL: "admin@example.com"
+.fi
+.SS Security Settings
+.nf
+nlmon:
+  security:
+    audit_log:
+      enabled: true
+      file: "/var/log/nlmon/audit.log"
+      hash_chain: true          # Cryptographic hash chaining
+      rotate_size: 100MB
+      
+    detectors:
+      promiscuous_mode: true
+      arp_flood: true
+      route_hijack: true
+      
+    access_control:
+      enabled: false
+      roles:
+        - name: admin
+          permissions: ["read", "write", "config"]
+        - name: viewer
+          permissions: ["read"]
+      
+    tls:
+      min_version: "1.3"
+      ciphers:
+        - "TLS_AES_256_GCM_SHA384"
+        - "TLS_CHACHA20_POLY1305_SHA256"
+.fi
+.SH ENVIRONMENT VARIABLES
+Configuration values can be overridden using environment variables. The variable name is formed by:
+.IP 1. 4
+Adding NLMON_ prefix
+.IP 2. 4
+Converting nested keys to uppercase with underscores
+.IP 3. 4
+Replacing dots with underscores
+
+Examples:
+.nf
+NLMON_WEB_PORT=9000
+NLMON_CORE_LOG_LEVEL=debug
+NLMON_OUTPUT_PCAP_FILE=/tmp/capture.pcap
+NLMON_PLUGINS_DIRECTORY=/opt/nlmon/plugins
+.fi
+.SH VARIABLE SUBSTITUTION
+Configuration files support environment variable substitution using ${VAR_NAME} syntax:
+.nf
+nlmon:
+  output:
+    database:
+      path: "${HOME}/.nlmon/events.db"
+  web:
+    port: ${NLMON_WEB_PORT:-8080}  # Default to 8080
+.fi
+.SH VALIDATION
+Validate configuration file without starting nlmon:
+.nf
+nlmon \-\-validate\-config \-c /etc/nlmon/nlmon.yaml
+.fi
+.SH EXAMPLES
+.SS Minimal Configuration
+.nf
+nlmon:
+  core:
+    log_level: info
+  monitoring:
+    interfaces:
+      include: ["eth*"]
+  output:
+    console:
+      enabled: true
+.fi
+.SS Production Configuration
+.nf
+nlmon:
+  core:
+    buffer_size: 1MB
+    max_events: 50000
+    rate_limit: 5000
+    worker_threads: 8
+    log_level: warning
+    
+  monitoring:
+    protocols:
+      - NETLINK_ROUTE
+    interfaces:
+      include: ["eth*", "bond*"]
+      exclude: ["lo", "docker*"]
+      
+  output:
+    console:
+      enabled: false
+    database:
+      enabled: true
+      path: "/var/lib/nlmon/events.db"
+      retention_days: 90
+    pcap:
+      enabled: true
+      file: "/var/log/nlmon/capture.pcap"
+      rotate_size: 500MB
+      rotate_count: 10
+      compress: true
+      
+  web:
+    enabled: true
+    port: 8080
+    tls:
+      enabled: true
+      cert: "/etc/nlmon/cert.pem"
+      key: "/etc/nlmon/key.pem"
+    auth:
+      enabled: true
+      type: jwt
+      
+  metrics:
+    enabled: true
+    port: 9090
+    
+  alerts:
+    - name: "critical_interface_down"
+      condition: "event.type == 'RTM_DELLINK' AND interface IN ['eth0', 'eth1']"
+      severity: critical
+      actions:
+        - type: webhook
+          url: "https://alerts.example.com/webhook"
+.fi
+.SS Container Monitoring Configuration
+.nf
+nlmon:
+  monitoring:
+    interfaces:
+      include: ["veth*", "docker*", "br-*"]
+      
+  filters:
+    - name: "container_events"
+      expression: "interface =~ 'veth.*'"
+      
+  integration:
+    docker:
+      enabled: true
+      socket: "/var/run/docker.sock"
+      enrich_events: true
+    kubernetes:
+      enabled: true
+      kubeconfig: "~/.kube/config"
+      enrich_events: true
+      
+  output:
+    json:
+      enabled: true
+      file: "/var/log/nlmon/container_events.json"
+      pretty: true
+.fi
+.SH FILES
+.TP
+.I /etc/nlmon/nlmon.yaml
+System-wide configuration file
+.TP
+.I ~/.nlmon/config.yaml
+User-specific configuration file
+.TP
+.I /etc/nlmon/nlmon.yaml.example
+Example configuration file
+.SH SEE ALSO
+.BR nlmon (1),
+.BR nlmon-plugins (7),
+.BR yaml (5)
+.SH AUTHOR
+Written by the nlmon development team.
