@@ -1,0 +1,154 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>nlmon - Network Link Monitor Dashboard</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>nlmon Dashboard</h1>
+            <div class="header-stats">
+                <span id="connection-status" class="status-badge disconnected">Disconnected</span>
+                <span id="event-rate">0 events/s</span>
+            </div>
+        </header>
+
+        <nav class="tabs">
+            <button class="tab-button active" data-tab="events">Events</button>
+            <button class="tab-button" data-tab="stats">Statistics</button>
+            <button class="tab-button" data-tab="filters">Filters</button>
+            <button class="tab-button" data-tab="config">Configuration</button>
+            <button class="tab-button" data-tab="alerts">Alerts</button>
+        </nav>
+
+        <main>
+            <!-- Events Tab -->
+            <div id="events-tab" class="tab-content active">
+                <div class="toolbar">
+                    <input type="text" id="search-input" placeholder="Search events...">
+                    <select id="event-type-filter">
+                        <option value="">All Types</option>
+                        <option value="link">Link</option>
+                        <option value="route">Route</option>
+                        <option value="addr">Address</option>
+                        <option value="neigh">Neighbor</option>
+                        <option value="rule">Rule</option>
+                    </select>
+                    <button id="clear-events">Clear</button>
+                    <button id="export-events">Export</button>
+                    <label>
+                        <input type="checkbox" id="auto-scroll" checked> Auto-scroll
+                    </label>
+                </div>
+                
+                <div class="events-container">
+                    <table id="events-table">
+                        <thead>
+                            <tr>
+                                <th>Timestamp</th>
+                                <th>Type</th>
+                                <th>Interface</th>
+                                <th>Event</th>
+                                <th>Details</th>
+                            </tr>
+                        </thead>
+                        <tbody id="events-body">
+                            <!-- Events will be inserted here -->
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+
+            <!-- Statistics Tab -->
+            <div id="stats-tab" class="tab-content">
+                <div class="stats-grid">
+                    <div class="stat-card">
+                        <h3>Total Events</h3>
+                        <div class="stat-value" id="total-events">0</div>
+                    </div>
+                    <div class="stat-card">
+                        <h3>Event Rate</h3>
+                        <div class="stat-value" id="event-rate-stat">0/s</div>
+                    </div>
+                    <div class="stat-card">
+                        <h3>Memory Usage</h3>
+                        <div class="stat-value" id="memory-usage">0 MB</div>
+                    </div>
+                    <div class="stat-card">
+                        <h3>CPU Usage</h3>
+                        <div class="stat-value" id="cpu-usage">0%</div>
+                    </div>
+                </div>
+
+                <div class="chart-container">
+                    <h3>Events by Type</h3>
+                    <canvas id="events-chart"></canvas>
+                </div>
+
+                <div class="chart-container">
+                    <h3>Event Rate Over Time</h3>
+                    <canvas id="rate-chart"></canvas>
+                </div>
+            </div>
+
+            <!-- Filters Tab -->
+            <div id="filters-tab" class="tab-content">
+                <div class="toolbar">
+                    <button id="add-filter">Add Filter</button>
+                </div>
+                
+                <div class="filters-list" id="filters-list">
+                    <!-- Filters will be inserted here -->
+                </div>
+
+                <div id="filter-editor" class="modal" style="display: none;">
+                    <div class="modal-content">
+                        <h2>Filter Editor</h2>
+                        <form id="filter-form">
+                            <label>
+                                Name:
+                                <input type="text" id="filter-name" required>
+                            </label>
+                            <label>
+                                Expression:
+                                <textarea id="filter-expression" rows="4" required></textarea>
+                            </label>
+                            <label>
+                                <input type="checkbox" id="filter-enabled" checked> Enabled
+                            </label>
+                            <div class="button-group">
+                                <button type="submit">Save</button>
+                                <button type="button" id="cancel-filter">Cancel</button>
+                            </div>
+                        </form>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Configuration Tab -->
+            <div id="config-tab" class="tab-content">
+                <div class="toolbar">
+                    <button id="save-config">Save Configuration</button>
+                    <button id="reload-config">Reload</button>
+                </div>
+                
+                <div class="config-editor">
+                    <textarea id="config-text" rows="20"></textarea>
+                </div>
+            </div>
+
+            <!-- Alerts Tab -->
+            <div id="alerts-tab" class="tab-content">
+                <div class="alerts-list" id="alerts-list">
+                    <!-- Alerts will be inserted here -->
+                </div>
+            </div>
+        </main>
+    </div>
+
+    <script src="app.js"></script>
+</body>
+</html>
