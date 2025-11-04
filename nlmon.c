@@ -1,5 +1,6 @@
 /* nlmon - monitor kernel netlink events for interface changes
  *
+ * Copyright (C) 2020-2025  Christian Bremvaag <christian@aircrack-ng.org>
  * Copyright (C) 2009-2011  Mårten Wikström <marten.wikstrom@keystream.se>
  * Copyright (C) 2009-2022  Joachim Wiberg <troglobit@gmail.com>
  * Copyright (c) 2015       Tobias Waldekranz <tobias@waldekranz.com>
@@ -65,6 +66,10 @@
 #include "signal_handler.h"
 #include "netlink_multi_protocol.h"
 
+/* WMI monitoring support */
+#include "wmi_log_reader.h"
+#include "wmi_event_bridge.h"
+
 /* CLI mode globals */
 static int cli_mode = 0;
 static WINDOW *main_win = NULL;
@@ -119,6 +124,14 @@ static int filter_msg_type = -1;  /* -1 means no filter */
 static int show_generic_netlink = 0;
 static int show_all_protocols = 0;
 
+/* WMI monitoring options */
+static int enable_wmi = 0;
+static char *wmi_source = NULL;
+static int wmi_follow_mode = 0;
+static char *wmi_filter_expr = NULL;
+static pthread_t wmi_thread;
+static int wmi_thread_started = 0;
+
 #define MAX_NETLINK_PACKET_SIZE 65536
 
 /* PCAP file format structures */
@@ -147,13 +160,13 @@ static void log_event(const char *msg)
 	struct tm *tm_info;
 	char timestamp[20];
 	char formatted_msg[256];
-	
+
 	time(&now);
 	tm_info = localtime(&now);
 	strftime(timestamp, sizeof(timestamp), "%H:%M:%S", tm_info);
-	
+
 	snprintf(formatted_msg, sizeof(formatted_msg), "[%s] %s", timestamp, msg);
-	
+
 	if (cli_mode) {
 		pthread_mutex_lock(&screen_mutex);
 		if (event_count < MAX_EVENTS) {
@@ -176,13 +189,13 @@ static int create_nlmon_device(const char *dev_name)
 	struct nl_sock *sk;
 	struct rtnl_link *link = NULL;
 	int err;
-	
+
 	/* Validate device name to prevent injection */
 	if (!dev_name || strlen(dev_name) == 0 || strlen(dev_name) >= IFNAMSIZ) {
 		warnx("Invalid device name");
 		return -1;
 	}
-	
+
 	/* Check for invalid characters */
 	for (const char *p = dev_name; *p; p++) {
 		if (!isalnum(*p) && *p != '_' && *p != '-') {
@@ -190,20 +203,20 @@ static int create_nlmon_device(const char *dev_name)
 			return -1;
 		}
 	}
-	
+
 	sk = nl_socket_alloc();
 	if (!sk) {
 		warnx("Failed to allocate netlink socket");
 		return -1;
 	}
-	
+
 	err = nl_connect(sk, NETLINK_ROUTE);
 	if (err < 0) {
 		warnx("Failed to connect to netlink: %s", strerror(-err));
 		nl_socket_free(sk);
 		return -1;
 	}
-	
+
 	/* Check if device already exists */
 	err = rtnl_link_get_kernel(sk, 0, dev_name, &link);
 	if (err == 0 && link) {
@@ -218,10 +231,10 @@ static int create_nlmon_device(const char *dev_name)
 			nl_socket_free(sk);
 			return -1;
 		}
-		
+
 		rtnl_link_set_name(link, dev_name);
 		rtnl_link_set_type(link, "nlmon");
-		
+
 		err = rtnl_link_add(sk, link, NLM_F_CREATE | NLM_F_EXCL);
 		if (err < 0) {
 			warnx("Failed to create nlmon device: %s", strerror(-err));
@@ -229,13 +242,13 @@ static int create_nlmon_device(const char *dev_name)
 			nl_socket_free(sk);
 			return -1;
 		}
-		
+
 		rtnl_link_put(link);
 		link = NULL;
-		
+
 		if (verbose_mode)
 			log_event("Created nlmon device");
-		
+
 		/* Get the newly created link */
 		err = rtnl_link_get_kernel(sk, 0, dev_name, &link);
 		if (err < 0 || !link) {
@@ -244,7 +257,7 @@ static int create_nlmon_device(const char *dev_name)
 			return -1;
 		}
 	}
-	
+
 	/* Set device UP */
 	struct rtnl_link *change = rtnl_link_alloc();
 	if (!change) {
@@ -253,9 +266,9 @@ static int create_nlmon_device(const char *dev_name)
 		nl_socket_free(sk);
 		return -1;
 	}
-	
+
 	rtnl_link_set_flags(change, IFF_UP);
-	
+
 	err = rtnl_link_change(sk, link, change, 0);
 	if (err < 0) {
 		warnx("Failed to bring up nlmon device: %s", strerror(-err));
@@ -264,14 +277,14 @@ static int create_nlmon_device(const char *dev_name)
 		nl_socket_free(sk);
 		return -1;
 	}
-	
+
 	rtnl_link_put(change);
 	rtnl_link_put(link);
 	nl_socket_free(sk);
-	
+
 	if (verbose_mode)
 		log_event("nlmon device is up");
-	
+
 	return 0;
 }
 
@@ -280,14 +293,14 @@ static int bind_nlmon_socket(const char *dev_name)
 	struct sockaddr_ll sll;
 	struct ifreq ifr;
 	int sock;
-	
+
 	/* Create raw socket */
 	sock = socket(AF_PACKET, SOCK_RAW, htons(ETH_P_ALL));
 	if (sock < 0) {
 		warn("Failed to create raw socket");
 		return -1;
 	}
-	
+
 	/* Get interface index */
 	memset(&ifr, 0, sizeof(ifr));
 	strncpy(ifr.ifr_name, dev_name, IFNAMSIZ - 1);
@@ -297,39 +310,39 @@ static int bind_nlmon_socket(const char *dev_name)
 		close(sock);
 		return -1;
 	}
-	
+
 	/* Bind to nlmon device */
 	memset(&sll, 0, sizeof(sll));
 	sll.sll_family = AF_PACKET;
 	sll.sll_ifindex = ifr.ifr_ifindex;
 	sll.sll_protocol = htons(ETH_P_ALL);
-	
+
 	if (bind(sock, (struct sockaddr *)&sll, sizeof(sll)) < 0) {
 		warn("Failed to bind to nlmon device %s", dev_name);
 		close(sock);
 		return -1;
 	}
-	
+
 	if (verbose_mode) {
 		char msg[256];
 		snprintf(msg, sizeof(msg), "Bound to nlmon device %s (ifindex=%d)", 
 		         dev_name, ifr.ifr_ifindex);
 		log_event(msg);
 	}
-	
+
 	return sock;
 }
 
 static int init_pcap_file(const char *filename)
 {
 	struct pcap_file_header fh;
-	
+
 	pcap_fp = fopen(filename, "wb");
 	if (!pcap_fp) {
 		warn("Failed to open pcap file %s", filename);
 		return -1;
 	}
-	
+
 	/* Write PCAP file header */
 	fh.magic_number = 0xa1b2c3d4;
 	fh.version_major = 2;
@@ -338,22 +351,22 @@ static int init_pcap_file(const char *filename)
 	fh.sigfigs = 0;
 	fh.snaplen = 65535;
 	fh.network = 253;  /* DLT_NETLINK for netlink messages */
-	
+
 	if (fwrite(&fh, sizeof(fh), 1, pcap_fp) != 1) {
 		warn("Failed to write pcap header");
 		fclose(pcap_fp);
 		pcap_fp = NULL;
 		return -1;
 	}
-	
+
 	fflush(pcap_fp);
-	
+
 	if (verbose_mode) {
 		char msg[256];
 		snprintf(msg, sizeof(msg), "Writing netlink packets to %s", filename);
 		log_event(msg);
 	}
-	
+
 	return 0;
 }
 
@@ -361,27 +374,27 @@ static void write_pcap_packet(const unsigned char *data, size_t len)
 {
 	struct pcap_packet_header ph;
 	struct timeval tv;
-	
+
 	if (!pcap_fp)
 		return;
-	
+
 	gettimeofday(&tv, NULL);
-	
+
 	ph.ts_sec = tv.tv_sec;
 	ph.ts_usec = tv.tv_usec;
 	ph.incl_len = len;
 	ph.orig_len = len;
-	
+
 	if (fwrite(&ph, sizeof(ph), 1, pcap_fp) != 1) {
 		warn("Failed to write pcap packet header");
 		return;
 	}
-	
+
 	if (fwrite(data, 1, len, pcap_fp) != len) {
 		warn("Failed to write pcap packet data");
 		return;
 	}
-	
+
 	fflush(pcap_fp);
 }
 
@@ -389,9 +402,9 @@ static void write_pcap_packet(const unsigned char *data, size_t len)
 static void genetlink_event_cb(nlmon_event_type_t type, void *data, void *user_data)
 {
 	char buf[256];
-	
+
 	(void)user_data;
-	
+
 	switch (type) {
 	case NLMON_EVENT_GENERIC: {
 		struct nlmon_generic_msg *msg = data;
@@ -414,6 +427,104 @@ static void genetlink_event_cb(nlmon_event_type_t type, void *data, void *user_d
 	default:
 		break;
 	}
+}
+
+/* Simple WMI filter matching function */
+static int wmi_filter_match(const struct wmi_log_entry *entry, const char *filter_expr)
+{
+	char key[64], value[128];
+	const char *eq_pos;
+
+	if (!filter_expr || !entry)
+		return 1;  /* No filter means match all */
+
+	/* Parse simple "key=value" filter expression */
+	eq_pos = strchr(filter_expr, '=');
+	if (!eq_pos)
+		return 1;  /* Invalid filter, match all */
+
+	/* Extract key and value */
+	size_t key_len = eq_pos - filter_expr;
+	if (key_len >= sizeof(key))
+		return 1;
+
+	strncpy(key, filter_expr, key_len);
+	key[key_len] = '\0';
+
+	strncpy(value, eq_pos + 1, sizeof(value) - 1);
+	value[sizeof(value) - 1] = '\0';
+
+	/* Match against WMI fields */
+	if (strcmp(key, "wmi.cmd") == 0) {
+		return (strcmp(entry->command_name, value) == 0);
+	} else if (strcmp(key, "wmi.vdev") == 0) {
+		char vdev_str[32];
+		snprintf(vdev_str, sizeof(vdev_str), "%u", entry->vdev_id);
+		return (strcmp(vdev_str, value) == 0);
+	} else if (strcmp(key, "wmi.stats") == 0) {
+		return (strcmp(entry->stats_type, value) == 0);
+	} else if (strcmp(key, "wmi.peer") == 0) {
+		return (strcmp(entry->peer_mac, value) == 0);
+	}
+
+	/* Unknown key, match all */
+	return 1;
+}
+
+/* WMI log line callback */
+static int wmi_log_line_cb(const char *line, void *user_data)
+{
+	struct wmi_log_entry entry;
+	char buf[512];
+	int ret;
+
+	(void)user_data;
+
+	/* Parse the WMI log line */
+	ret = wmi_parse_log_line(line, &entry);
+	if (ret < 0) {
+		/* Parsing failed - skip this line silently unless verbose */
+		if (verbose_mode > 1) {
+			snprintf(buf, sizeof(buf), "wmi: failed to parse line");
+			log_event(buf);
+		}
+		return 0;  /* Continue processing */
+	}
+	
+	/* Apply WMI filter if specified */
+	if (wmi_filter_expr && !wmi_filter_match(&entry, wmi_filter_expr)) {
+		return 0;  /* Filtered out */
+	}
+	
+	/* Format and log the WMI event */
+	ret = wmi_format_entry(&entry, buf, sizeof(buf));
+	if (ret > 0) {
+		log_event(buf);
+		
+		/* Submit to event bridge if available */
+		wmi_bridge_submit(&entry);
+	}
+	
+	return 0;
+}
+
+/* WMI reader thread function */
+static void *wmi_reader_thread(void *arg)
+{
+	(void)arg;
+	
+	if (verbose_mode) {
+		log_event("WMI reader thread started");
+	}
+	
+	/* Start reading WMI logs - this blocks until stopped or EOF */
+	wmi_log_reader_start();
+	
+	if (verbose_mode) {
+		log_event("WMI reader thread stopped");
+	}
+	
+	return NULL;
 }
 
 /* Generic netlink I/O callback */
@@ -808,6 +919,22 @@ static void cleanup_cli(void)
 /* Cleanup memory management and resource tracking */
 static void cleanup_memory_management(void)
 {
+	/* Cleanup WMI monitoring */
+	if (enable_wmi) {
+		if (wmi_thread_started) {
+			/* Stop WMI reader */
+			wmi_log_reader_stop();
+			
+			/* Wait for thread to finish */
+			pthread_join(wmi_thread, NULL);
+			wmi_thread_started = 0;
+		}
+		
+		/* Cleanup WMI components */
+		wmi_log_reader_cleanup();
+		wmi_bridge_cleanup();
+	}
+	
 	/* Dump memory statistics if tracker is enabled */
 	if (g_memory_tracker) {
 		memory_tracker_update_system_stats(g_memory_tracker);
@@ -1075,7 +1202,7 @@ err_free_mngr:
 
 static int usage(int rc)
 {
-	printf("Usage: nlmon [-h?vciau] [-m device] [-p file] [-V] [-f type] [-g]\n"
+	printf("Usage: nlmon [-h?vciau] [-m device] [-p file] [-V] [-f type] [-g] [-w source] [-W expr]\n"
 	       "\n"
 	       "Options:\n"
 	       "  -h    This help text\n"
@@ -1090,6 +1217,8 @@ static int usage(int rc)
 	       "  -f    Filter by netlink message type (e.g., -f 16 for RTM_NEWLINK)\n"
 	       "  -g    Enable NETLINK_GENERIC protocol monitoring\n"
 	       "  -A    Monitor all netlink protocols (not just NETLINK_ROUTE)\n"
+	       "  -w    Enable WMI log monitoring from <source> (file path, '-' for stdin, or 'follow:path')\n"
+	       "  -W    Filter WMI events with expression (e.g., 'wmi.cmd=REQUEST_STATS')\n"
 	       "\n"
 	       "nlmon Kernel Module Support:\n"
 	       "  The -m option enables binding to a virtual nlmon network device to capture\n"
@@ -1102,6 +1231,15 @@ static int usage(int rc)
 	       "    sudo modprobe nlmon\n"
 	       "    sudo ip link add nlmon0 type nlmon\n"
 	       "    sudo ip link set nlmon0 up\n"
+	       "\n"
+	       "WMI Monitoring:\n"
+	       "  The -w option enables monitoring of Qualcomm WMI commands from device logs.\n"
+	       "  \n"
+	       "  Example: nlmon -w /var/log/wlan.log\n"
+	       "  Example: cat device.log | nlmon -w -\n"
+	       "  Example: nlmon -w follow:/var/log/wlan.log  # Follow mode (like tail -f)\n"
+	       "  Example: nlmon -g -w /var/log/wlan.log      # Combine with netlink monitoring\n"
+	       "  Example: nlmon -w /var/log/wlan.log -W 'wmi.cmd=REQUEST_LINK_STATS'\n"
 	       "\n"
 	       "Common Message Types:\n"
 	       "  RTM_NEWLINK=16, RTM_DELLINK=17, RTM_NEWADDR=20, RTM_DELADDR=21\n"
@@ -1153,7 +1291,7 @@ int main(int argc, char *argv[])
 		warnx("Failed to initialize signal handler");
 	}
 
-	while ((c = getopt(argc, argv, "h?vciauVm:p:f:gA")) != EOF) {
+	while ((c = getopt(argc, argv, "h?vciauVm:p:f:gAw:W:")) != EOF) {
 		switch (c) {
 		case 'h':
 		case '?':
@@ -1211,6 +1349,30 @@ int main(int argc, char *argv[])
 		case 'A':
 			show_all_protocols = 1;
 			break;
+			
+		case 'w':
+			enable_wmi = 1;
+			/* Check for "follow:" prefix */
+			if (strncmp(optarg, "follow:", 7) == 0) {
+				wmi_follow_mode = 1;
+				wmi_source = optarg + 7;  /* Skip "follow:" prefix */
+			} else {
+				wmi_source = optarg;
+			}
+			
+			/* Validate source */
+			if (strcmp(wmi_source, "-") != 0) {
+				/* Check if file exists and is readable */
+				if (access(wmi_source, R_OK) != 0 && !wmi_follow_mode) {
+					warn("Cannot access WMI log source: %s", wmi_source);
+					return usage(1);
+				}
+			}
+			break;
+			
+		case 'W':
+			wmi_filter_expr = optarg;
+			break;
 
 		default:
 			return usage(1);
@@ -1220,6 +1382,12 @@ int main(int argc, char *argv[])
 	/* Validate options */
 	if (pcap_file && !use_nlmon) {
 		warnx("PCAP file output (-p) requires nlmon device (-m)");
+		return usage(1);
+	}
+	
+	/* Validate WMI options */
+	if (wmi_filter_expr && !enable_wmi) {
+		warnx("WMI filter (-W) requires WMI monitoring (-w)");
 		return usage(1);
 	}
 	
@@ -1275,6 +1443,54 @@ int main(int argc, char *argv[])
 						log_event("NETLINK_SOCK_DIAG monitoring enabled");
 				} else {
 					warnx("Failed to enable NETLINK_SOCK_DIAG monitoring");
+				}
+			}
+		}
+	}
+	
+	/* Initialize WMI monitoring if requested */
+	if (enable_wmi) {
+		struct wmi_log_config wmi_config;
+		struct wmi_bridge_config bridge_config;
+		
+		/* Initialize WMI event bridge first */
+		memset(&bridge_config, 0, sizeof(bridge_config));
+		bridge_config.event_processor = NULL;  /* Not using event processor for now */
+		bridge_config.verbose = verbose_mode;
+		bridge_config.user_data = NULL;
+		
+		if (wmi_bridge_init(&bridge_config) < 0) {
+			warnx("Failed to initialize WMI event bridge");
+			enable_wmi = 0;
+		} else {
+			/* Configure WMI log reader */
+			memset(&wmi_config, 0, sizeof(wmi_config));
+			wmi_config.log_source = wmi_source;
+			wmi_config.follow_mode = wmi_follow_mode;
+			wmi_config.buffer_size = 4096;
+			wmi_config.callback = wmi_log_line_cb;
+			wmi_config.user_data = NULL;
+			
+			if (wmi_log_reader_init(&wmi_config) < 0) {
+				warnx("Failed to initialize WMI log reader");
+				wmi_bridge_cleanup();
+				enable_wmi = 0;
+			} else {
+				if (verbose_mode) {
+					char msg[256];
+					snprintf(msg, sizeof(msg), "WMI monitoring enabled: source=%s%s",
+					         wmi_follow_mode ? "follow:" : "", wmi_source);
+					log_event(msg);
+				}
+				
+				/* Start WMI reader thread */
+				if (pthread_create(&wmi_thread, NULL, wmi_reader_thread, NULL) != 0) {
+					warn("Failed to create WMI reader thread");
+					wmi_log_reader_cleanup();
+					wmi_bridge_cleanup();
+					enable_wmi = 0;
+				} else {
+					wmi_thread_started = 1;
 				}
 			}
 		}
