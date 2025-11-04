@@ -23,7 +23,7 @@ CORE_OBJS := $(CORE_SRCS:.c=.o)
 CONFIG_SRCS   := src/config/config.c src/config/yaml_parser.c src/config/hot_reload.c
 CORE_ENGINE_SRCS := src/core/ring_buffer.c src/core/thread_pool.c src/core/rate_limiter.c src/core/event_processor.c
 MEMORY_MGMT_SRCS := src/core/object_pool.c src/core/event_pool.c src/core/filter_pool.c src/core/resource_tracker.c src/core/signal_handler.c src/core/memory_tracker.c src/core/performance_profiler.c
-NETLINK_SRCS := src/core/netlink_multi_protocol.c src/core/namespace_tracker.c src/core/interface_detector.c
+NETLINK_SRCS := src/core/netlink_multi_protocol.c src/core/namespace_tracker.c src/core/interface_detector.c src/core/qca_vendor.c
 FILTER_SRCS := src/core/filter_parser.c src/core/filter_compiler.c src/core/filter_eval.c src/core/filter_manager.c
 CORRELATION_SRCS := src/core/time_window.c src/core/correlation_engine.c src/core/pattern_detector.c src/core/anomaly_detector.c
 SECURITY_SRCS := src/core/security_detector.c src/web/access_control.c

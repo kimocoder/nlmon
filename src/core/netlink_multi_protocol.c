@@ -11,8 +11,10 @@
 #include <linux/inet_diag.h>
 #include <linux/unix_diag.h>
 #include <arpa/inet.h>
+#include <netlink/attr.h>
 
 #include "netlink_multi_protocol.h"
+#include "qca_vendor.h"
 
 #define NLMON_RECV_BUF_SIZE 8192
 
@@ -196,6 +198,11 @@ int nlmon_multi_protocol_get_fd(struct nlmon_multi_protocol_ctx *ctx, nlmon_prot
 int nlmon_parse_generic_msg(struct nlmsghdr *nlh, struct nlmon_generic_msg *msg)
 {
 	struct genlmsghdr *ghdr;
+	struct nlattr *attr;
+	int attr_len;
+	uint32_t vendor_id = 0;
+	uint32_t vendor_subcmd = 0;
+	int is_vendor_cmd = 0;
 	
 	if (!nlh || !msg)
 		return -1;
@@ -209,8 +216,38 @@ int nlmon_parse_generic_msg(struct nlmsghdr *nlh, struct nlmon_generic_msg *msg)
 	msg->version = ghdr->version;
 	msg->family_id = nlh->nlmsg_type;
 	
-	/* Family name would need to be resolved separately */
-	snprintf(msg->family_name, sizeof(msg->family_name), "family_%u", msg->family_id);
+	/* Parse attributes to check for vendor commands */
+	attr = (struct nlattr *)((char *)ghdr + GENL_HDRLEN);
+	attr_len = nlh->nlmsg_len - NLMSG_LENGTH(GENL_HDRLEN);
+	
+	while (nla_ok(attr, attr_len)) {
+		/* Check for vendor ID and subcmd attributes (nl80211 specific) */
+		if (nla_type(attr) == 195) {  /* NL80211_ATTR_VENDOR_ID */
+			if (nla_len(attr) >= sizeof(uint32_t)) {
+				vendor_id = *(uint32_t *)nla_data(attr);
+				is_vendor_cmd = 1;
+			}
+		} else if (nla_type(attr) == 196) {  /* NL80211_ATTR_VENDOR_SUBCMD */
+			if (nla_len(attr) >= sizeof(uint32_t)) {
+				vendor_subcmd = *(uint32_t *)nla_data(attr);
+			}
+		}
+		attr = nla_next(attr, &attr_len);
+	}
+	
+	/* Check if this is a QCA vendor command */
+	if (is_vendor_cmd && vendor_id == OUI_QCA) {
+		const char *subcmd_name = qca_vendor_subcmd_to_string(vendor_subcmd);
+		snprintf(msg->family_name, sizeof(msg->family_name), 
+		         "nl80211/QCA:%s", subcmd_name);
+		msg->cmd = vendor_subcmd;  /* Override with vendor subcmd for better display */
+	} else if (is_vendor_cmd) {
+		snprintf(msg->family_name, sizeof(msg->family_name), 
+		         "nl80211/vendor:0x%06x", vendor_id);
+	} else {
+		/* Family name would need to be resolved separately */
+		snprintf(msg->family_name, sizeof(msg->family_name), "family_%u", msg->family_id);
+	}
 	
 	return 0;
 }
