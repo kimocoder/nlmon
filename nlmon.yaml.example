@@ -34,6 +34,41 @@ nlmon:
     namespaces:
       enabled: false
   
+  # Netlink configuration (libnl-tiny integration)
+  netlink:
+    # Protocol enable/disable flags
+    protocols:
+      route: true               # NETLINK_ROUTE - network interfaces, addresses, routes
+      generic: false            # NETLINK_GENERIC - nl80211, taskstats, vendor commands
+      sock_diag: false          # NETLINK_SOCK_DIAG - socket diagnostics
+      netfilter: false          # NETLINK_NETFILTER - connection tracking, firewall
+    
+    # Socket buffer sizes
+    buffer_size:
+      receive: 32KB             # Receive buffer size (supports KB, MB)
+      send: 32KB                # Send buffer size
+    
+    # Cache configuration for performance
+    caching:
+      enabled: false            # Enable caching subsystem
+      link_cache: false         # Cache network interfaces
+      addr_cache: false         # Cache IP addresses
+      route_cache: false        # Cache routing table
+    
+    # Multicast groups to subscribe (NETLINK_ROUTE)
+    multicast_groups:
+      - "link"                  # Interface events
+      - "ipv4_ifaddr"           # IPv4 address events
+      - "ipv6_ifaddr"           # IPv6 address events
+      - "ipv4_route"            # IPv4 route events
+      - "ipv6_route"            # IPv6 route events
+      - "neigh"                 # Neighbor (ARP/NDP) events
+    
+    # Generic netlink families to monitor
+    generic_families:
+      - "nl80211"               # WiFi monitoring
+      - "taskstats"             # Task statistics
+  
   # Event filtering rules
   filters:
     - name: "container_events"

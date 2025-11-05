@@ -374,3 +374,21 @@ int nl_cache_refill(struct nl_sock *sk, struct nl_cache *cache)
 }
 
 /** @} */
+
+/**
+ * @name Cache Access
+ * @{
+ */
+
+/**
+ * Return number of items in cache
+ * @arg cache		Cache
+ *
+ * @return Number of items in cache
+ */
+int nl_cache_nitems(struct nl_cache *cache)
+{
+	return cache->c_nitems;
+}
+
+/** @} */

@@ -67,6 +67,52 @@ struct nlmon_monitoring_config {
 	bool namespaces_enabled;
 };
 
+/* Netlink protocol configuration */
+struct nlmon_netlink_protocols_config {
+	bool route;                   /* Enable NETLINK_ROUTE */
+	bool generic;                 /* Enable NETLINK_GENERIC */
+	bool sock_diag;               /* Enable NETLINK_SOCK_DIAG */
+	bool netfilter;               /* Enable NETLINK_NETFILTER */
+};
+
+/* Netlink buffer configuration */
+struct nlmon_netlink_buffer_config {
+	size_t receive;               /* Receive buffer size in bytes */
+	size_t send;                  /* Send buffer size in bytes */
+};
+
+/* Netlink cache configuration */
+struct nlmon_netlink_cache_config {
+	bool enabled;                 /* Enable caching */
+	bool link_cache;              /* Cache network interfaces */
+	bool addr_cache;              /* Cache IP addresses */
+	bool route_cache;             /* Cache routing table */
+};
+
+/* Netlink multicast groups configuration */
+#define NLMON_MAX_MCAST_GROUPS 16
+struct nlmon_netlink_mcast_config {
+	int group_count;
+	char groups[NLMON_MAX_MCAST_GROUPS][NLMON_MAX_NAME];
+};
+
+/* Netlink generic families configuration */
+#define NLMON_MAX_GENL_FAMILIES 8
+struct nlmon_netlink_genl_config {
+	int family_count;
+	char families[NLMON_MAX_GENL_FAMILIES][NLMON_MAX_NAME];
+};
+
+/* Netlink configuration */
+struct nlmon_netlink_config {
+	bool use_libnl;               /* Use libnl-based implementation (default: true) */
+	struct nlmon_netlink_protocols_config protocols;
+	struct nlmon_netlink_buffer_config buffer_size;
+	struct nlmon_netlink_cache_config caching;
+	struct nlmon_netlink_mcast_config multicast_groups;
+	struct nlmon_netlink_genl_config generic_families;
+};
+
 /* Filter configuration */
 struct nlmon_filter_config {
 	char name[NLMON_MAX_NAME];
@@ -210,6 +256,7 @@ struct nlmon_config {
 	/* Configuration sections */
 	struct nlmon_core_config core;
 	struct nlmon_monitoring_config monitoring;
+	struct nlmon_netlink_config netlink;
 	
 	int filter_count;
 	struct nlmon_filter_config filters[NLMON_MAX_FILTERS];
@@ -321,6 +368,14 @@ void nlmon_config_get_cli(struct nlmon_config_ctx *ctx,
  */
 void nlmon_config_get_web(struct nlmon_config_ctx *ctx,
                           struct nlmon_web_config *web);
+
+/**
+ * nlmon_config_get_netlink - Get netlink configuration (thread-safe)
+ * @ctx: Configuration context
+ * @netlink: Output buffer for netlink configuration
+ */
+void nlmon_config_get_netlink(struct nlmon_config_ctx *ctx,
+                              struct nlmon_netlink_config *netlink);
 
 /**
  * nlmon_config_get_version - Get current configuration version

@@ -7,10 +7,15 @@
 #include <string.h>
 #include <stdio.h>
 #include <time.h>
+#include <linux/netlink.h>
 #include "filter_eval.h"
 #include "filter_compiler.h"
 #include "filter_parser.h"
 #include "event_processor.h"
+#include "nlmon_nl_route.h"
+#include "nlmon_nl_genl.h"
+#include "nlmon_nl_diag.h"
+#include "nlmon_nl_netfilter.h"
 
 #define INITIAL_STACK_CAPACITY 32
 #define INITIAL_REGEX_CACHE_CAPACITY 8
@@ -132,6 +137,410 @@ static bool extract_field(struct nlmon_event *event, uint8_t field_type,
 		value->type = FILTER_VALUE_STRING;
 		value->data.string_val = strdup("");
 		return value->data.string_val != NULL;
+	
+	/* Netlink common fields */
+	case FILTER_FIELD_NL_PROTOCOL:
+		value->type = FILTER_VALUE_NUMBER;
+		value->data.number_val = event->netlink.protocol;
+		return true;
+		
+	case FILTER_FIELD_NL_MSG_TYPE:
+		value->type = FILTER_VALUE_NUMBER;
+		value->data.number_val = event->netlink.msg_type;
+		return true;
+		
+	case FILTER_FIELD_NL_MSG_FLAGS:
+		value->type = FILTER_VALUE_NUMBER;
+		value->data.number_val = event->netlink.msg_flags;
+		return true;
+		
+	case FILTER_FIELD_NL_SEQ:
+		value->type = FILTER_VALUE_NUMBER;
+		value->data.number_val = event->netlink.seq;
+		return true;
+		
+	case FILTER_FIELD_NL_PID:
+		value->type = FILTER_VALUE_NUMBER;
+		value->data.number_val = event->netlink.pid;
+		return true;
+		
+	case FILTER_FIELD_NL_GENL_CMD:
+		value->type = FILTER_VALUE_NUMBER;
+		value->data.number_val = event->netlink.genl_cmd;
+		return true;
+		
+	case FILTER_FIELD_NL_GENL_VERSION:
+		value->type = FILTER_VALUE_NUMBER;
+		value->data.number_val = event->netlink.genl_version;
+		return true;
+		
+	case FILTER_FIELD_NL_GENL_FAMILY_ID:
+		value->type = FILTER_VALUE_NUMBER;
+		value->data.number_val = event->netlink.genl_family_id;
+		return true;
+		
+	case FILTER_FIELD_NL_GENL_FAMILY_NAME:
+		value->type = FILTER_VALUE_STRING;
+		value->data.string_val = strdup(event->netlink.genl_family_name);
+		return value->data.string_val != NULL;
+	
+	/* NETLINK_ROUTE link fields */
+	case FILTER_FIELD_NL_LINK_IFNAME:
+		if (!event->netlink.data.link)
+			return false;
+		value->type = FILTER_VALUE_STRING;
+		value->data.string_val = strdup(event->netlink.data.link->ifname);
+		return value->data.string_val != NULL;
+		
+	case FILTER_FIELD_NL_LINK_IFINDEX:
+		if (!event->netlink.data.link)
+			return false;
+		value->type = FILTER_VALUE_NUMBER;
+		value->data.number_val = event->netlink.data.link->ifindex;
+		return true;
+		
+	case FILTER_FIELD_NL_LINK_FLAGS:
+		if (!event->netlink.data.link)
+			return false;
+		value->type = FILTER_VALUE_NUMBER;
+		value->data.number_val = event->netlink.data.link->flags;
+		return true;
+		
+	case FILTER_FIELD_NL_LINK_MTU:
+		if (!event->netlink.data.link)
+			return false;
+		value->type = FILTER_VALUE_NUMBER;
+		value->data.number_val = event->netlink.data.link->mtu;
+		return true;
+		
+	case FILTER_FIELD_NL_LINK_OPERSTATE:
+		if (!event->netlink.data.link)
+			return false;
+		value->type = FILTER_VALUE_NUMBER;
+		value->data.number_val = event->netlink.data.link->operstate;
+		return true;
+		
+	case FILTER_FIELD_NL_LINK_QDISC:
+		if (!event->netlink.data.link)
+			return false;
+		value->type = FILTER_VALUE_STRING;
+		value->data.string_val = strdup(event->netlink.data.link->qdisc);
+		return value->data.string_val != NULL;
+	
+	/* NETLINK_ROUTE address fields */
+	case FILTER_FIELD_NL_ADDR_FAMILY:
+		if (!event->netlink.data.addr)
+			return false;
+		value->type = FILTER_VALUE_NUMBER;
+		value->data.number_val = event->netlink.data.addr->family;
+		return true;
+		
+	case FILTER_FIELD_NL_ADDR_IFINDEX:
+		if (!event->netlink.data.addr)
+			return false;
+		value->type = FILTER_VALUE_NUMBER;
+		value->data.number_val = event->netlink.data.addr->ifindex;
+		return true;
+		
+	case FILTER_FIELD_NL_ADDR_PREFIXLEN:
+		if (!event->netlink.data.addr)
+			return false;
+		value->type = FILTER_VALUE_NUMBER;
+		value->data.number_val = event->netlink.data.addr->prefixlen;
+		return true;
+		
+	case FILTER_FIELD_NL_ADDR_SCOPE:
+		if (!event->netlink.data.addr)
+			return false;
+		value->type = FILTER_VALUE_NUMBER;
+		value->data.number_val = event->netlink.data.addr->scope;
+		return true;
+		
+	case FILTER_FIELD_NL_ADDR_ADDR:
+		if (!event->netlink.data.addr)
+			return false;
+		value->type = FILTER_VALUE_STRING;
+		value->data.string_val = strdup(event->netlink.data.addr->addr);
+		return value->data.string_val != NULL;
+		
+	case FILTER_FIELD_NL_ADDR_LABEL:
+		if (!event->netlink.data.addr)
+			return false;
+		value->type = FILTER_VALUE_STRING;
+		value->data.string_val = strdup(event->netlink.data.addr->label);
+		return value->data.string_val != NULL;
+	
+	/* NETLINK_ROUTE route fields */
+	case FILTER_FIELD_NL_ROUTE_FAMILY:
+		if (!event->netlink.data.route)
+			return false;
+		value->type = FILTER_VALUE_NUMBER;
+		value->data.number_val = event->netlink.data.route->family;
+		return true;
+		
+	case FILTER_FIELD_NL_ROUTE_DST:
+		if (!event->netlink.data.route)
+			return false;
+		value->type = FILTER_VALUE_STRING;
+		value->data.string_val = strdup(event->netlink.data.route->dst);
+		return value->data.string_val != NULL;
+		
+	case FILTER_FIELD_NL_ROUTE_SRC:
+		if (!event->netlink.data.route)
+			return false;
+		value->type = FILTER_VALUE_STRING;
+		value->data.string_val = strdup(event->netlink.data.route->src);
+		return value->data.string_val != NULL;
+		
+	case FILTER_FIELD_NL_ROUTE_GATEWAY:
+		if (!event->netlink.data.route)
+			return false;
+		value->type = FILTER_VALUE_STRING;
+		value->data.string_val = strdup(event->netlink.data.route->gateway);
+		return value->data.string_val != NULL;
+		
+	case FILTER_FIELD_NL_ROUTE_OIF:
+		if (!event->netlink.data.route)
+			return false;
+		value->type = FILTER_VALUE_NUMBER;
+		value->data.number_val = event->netlink.data.route->oif;
+		return true;
+		
+	case FILTER_FIELD_NL_ROUTE_PROTOCOL:
+		if (!event->netlink.data.route)
+			return false;
+		value->type = FILTER_VALUE_NUMBER;
+		value->data.number_val = event->netlink.data.route->protocol;
+		return true;
+		
+	case FILTER_FIELD_NL_ROUTE_SCOPE:
+		if (!event->netlink.data.route)
+			return false;
+		value->type = FILTER_VALUE_NUMBER;
+		value->data.number_val = event->netlink.data.route->scope;
+		return true;
+		
+	case FILTER_FIELD_NL_ROUTE_TYPE:
+		if (!event->netlink.data.route)
+			return false;
+		value->type = FILTER_VALUE_NUMBER;
+		value->data.number_val = event->netlink.data.route->type;
+		return true;
+		
+	case FILTER_FIELD_NL_ROUTE_PRIORITY:
+		if (!event->netlink.data.route)
+			return false;
+		value->type = FILTER_VALUE_NUMBER;
+		value->data.number_val = event->netlink.data.route->priority;
+		return true;
+	
+	/* NETLINK_ROUTE neighbor fields */
+	case FILTER_FIELD_NL_NEIGH_FAMILY:
+		if (!event->netlink.data.neigh)
+			return false;
+		value->type = FILTER_VALUE_NUMBER;
+		value->data.number_val = event->netlink.data.neigh->family;
+		return true;
+		
+	case FILTER_FIELD_NL_NEIGH_IFINDEX:
+		if (!event->netlink.data.neigh)
+			return false;
+		value->type = FILTER_VALUE_NUMBER;
+		value->data.number_val = event->netlink.data.neigh->ifindex;
+		return true;
+		
+	case FILTER_FIELD_NL_NEIGH_STATE:
+		if (!event->netlink.data.neigh)
+			return false;
+		value->type = FILTER_VALUE_NUMBER;
+		value->data.number_val = event->netlink.data.neigh->state;
+		return true;
+		
+	case FILTER_FIELD_NL_NEIGH_DST:
+		if (!event->netlink.data.neigh)
+			return false;
+		value->type = FILTER_VALUE_STRING;
+		value->data.string_val = strdup(event->netlink.data.neigh->dst);
+		return value->data.string_val != NULL;
+	
+	/* NETLINK_SOCK_DIAG fields */
+	case FILTER_FIELD_NL_DIAG_FAMILY:
+		if (!event->netlink.data.diag)
+			return false;
+		value->type = FILTER_VALUE_NUMBER;
+		value->data.number_val = event->netlink.data.diag->family;
+		return true;
+		
+	case FILTER_FIELD_NL_DIAG_STATE:
+		if (!event->netlink.data.diag)
+			return false;
+		value->type = FILTER_VALUE_NUMBER;
+		value->data.number_val = event->netlink.data.diag->state;
+		return true;
+		
+	case FILTER_FIELD_NL_DIAG_PROTOCOL:
+		if (!event->netlink.data.diag)
+			return false;
+		value->type = FILTER_VALUE_NUMBER;
+		value->data.number_val = event->netlink.data.diag->protocol;
+		return true;
+		
+	case FILTER_FIELD_NL_DIAG_SRC_PORT:
+		if (!event->netlink.data.diag)
+			return false;
+		value->type = FILTER_VALUE_NUMBER;
+		value->data.number_val = event->netlink.data.diag->src_port;
+		return true;
+		
+	case FILTER_FIELD_NL_DIAG_DST_PORT:
+		if (!event->netlink.data.diag)
+			return false;
+		value->type = FILTER_VALUE_NUMBER;
+		value->data.number_val = event->netlink.data.diag->dst_port;
+		return true;
+		
+	case FILTER_FIELD_NL_DIAG_SRC_ADDR:
+		if (!event->netlink.data.diag)
+			return false;
+		value->type = FILTER_VALUE_STRING;
+		value->data.string_val = strdup(event->netlink.data.diag->src_addr);
+		return value->data.string_val != NULL;
+		
+	case FILTER_FIELD_NL_DIAG_DST_ADDR:
+		if (!event->netlink.data.diag)
+			return false;
+		value->type = FILTER_VALUE_STRING;
+		value->data.string_val = strdup(event->netlink.data.diag->dst_addr);
+		return value->data.string_val != NULL;
+		
+	case FILTER_FIELD_NL_DIAG_UID:
+		if (!event->netlink.data.diag)
+			return false;
+		value->type = FILTER_VALUE_NUMBER;
+		value->data.number_val = event->netlink.data.diag->uid;
+		return true;
+		
+	case FILTER_FIELD_NL_DIAG_INODE:
+		if (!event->netlink.data.diag)
+			return false;
+		value->type = FILTER_VALUE_NUMBER;
+		value->data.number_val = event->netlink.data.diag->inode;
+		return true;
+	
+	/* NETLINK_NETFILTER conntrack fields */
+	case FILTER_FIELD_NL_CT_PROTOCOL:
+		if (!event->netlink.data.conntrack)
+			return false;
+		value->type = FILTER_VALUE_NUMBER;
+		value->data.number_val = event->netlink.data.conntrack->protocol;
+		return true;
+		
+	case FILTER_FIELD_NL_CT_TCP_STATE:
+		if (!event->netlink.data.conntrack)
+			return false;
+		value->type = FILTER_VALUE_NUMBER;
+		value->data.number_val = event->netlink.data.conntrack->tcp_state;
+		return true;
+		
+	case FILTER_FIELD_NL_CT_SRC_ADDR:
+		if (!event->netlink.data.conntrack)
+			return false;
+		value->type = FILTER_VALUE_STRING;
+		value->data.string_val = strdup(event->netlink.data.conntrack->src_addr);
+		return value->data.string_val != NULL;
+		
+	case FILTER_FIELD_NL_CT_DST_ADDR:
+		if (!event->netlink.data.conntrack)
+			return false;
+		value->type = FILTER_VALUE_STRING;
+		value->data.string_val = strdup(event->netlink.data.conntrack->dst_addr);
+		return value->data.string_val != NULL;
+		
+	case FILTER_FIELD_NL_CT_SRC_PORT:
+		if (!event->netlink.data.conntrack)
+			return false;
+		value->type = FILTER_VALUE_NUMBER;
+		value->data.number_val = event->netlink.data.conntrack->src_port;
+		return true;
+		
+	case FILTER_FIELD_NL_CT_DST_PORT:
+		if (!event->netlink.data.conntrack)
+			return false;
+		value->type = FILTER_VALUE_NUMBER;
+		value->data.number_val = event->netlink.data.conntrack->dst_port;
+		return true;
+		
+	case FILTER_FIELD_NL_CT_MARK:
+		if (!event->netlink.data.conntrack)
+			return false;
+		value->type = FILTER_VALUE_NUMBER;
+		value->data.number_val = event->netlink.data.conntrack->mark;
+		return true;
+	
+	/* NETLINK_GENERIC nl80211 fields */
+	case FILTER_FIELD_NL_NL80211_CMD:
+		if (!event->netlink.data.nl80211)
+			return false;
+		value->type = FILTER_VALUE_NUMBER;
+		value->data.number_val = event->netlink.data.nl80211->cmd;
+		return true;
+		
+	case FILTER_FIELD_NL_NL80211_WIPHY:
+		if (!event->netlink.data.nl80211)
+			return false;
+		value->type = FILTER_VALUE_NUMBER;
+		value->data.number_val = event->netlink.data.nl80211->wiphy;
+		return true;
+		
+	case FILTER_FIELD_NL_NL80211_IFINDEX:
+		if (!event->netlink.data.nl80211)
+			return false;
+		value->type = FILTER_VALUE_NUMBER;
+		value->data.number_val = event->netlink.data.nl80211->ifindex;
+		return true;
+		
+	case FILTER_FIELD_NL_NL80211_IFNAME:
+		if (!event->netlink.data.nl80211)
+			return false;
+		value->type = FILTER_VALUE_STRING;
+		value->data.string_val = strdup(event->netlink.data.nl80211->ifname);
+		return value->data.string_val != NULL;
+		
+	case FILTER_FIELD_NL_NL80211_IFTYPE:
+		if (!event->netlink.data.nl80211)
+			return false;
+		value->type = FILTER_VALUE_NUMBER;
+		value->data.number_val = event->netlink.data.nl80211->iftype;
+		return true;
+		
+	case FILTER_FIELD_NL_NL80211_FREQ:
+		if (!event->netlink.data.nl80211)
+			return false;
+		value->type = FILTER_VALUE_NUMBER;
+		value->data.number_val = event->netlink.data.nl80211->freq;
+		return true;
+	
+	/* QCA vendor fields */
+	case FILTER_FIELD_NL_QCA_SUBCMD:
+		if (!event->netlink.data.qca_vendor)
+			return false;
+		value->type = FILTER_VALUE_NUMBER;
+		value->data.number_val = event->netlink.data.qca_vendor->subcmd;
+		return true;
+		
+	case FILTER_FIELD_NL_QCA_SUBCMD_NAME:
+		if (!event->netlink.data.qca_vendor)
+			return false;
+		value->type = FILTER_VALUE_STRING;
+		value->data.string_val = strdup(event->netlink.data.qca_vendor->subcmd_name);
+		return value->data.string_val != NULL;
+		
+	case FILTER_FIELD_NL_QCA_VENDOR_ID:
+		if (!event->netlink.data.qca_vendor)
+			return false;
+		value->type = FILTER_VALUE_NUMBER;
+		value->data.number_val = event->netlink.data.qca_vendor->vendor_id;
+		return true;
 		
 	default:
 		return false;

@@ -28,6 +28,7 @@ struct yaml_parse_ctx {
 	/* Current parsing state */
 	char section[64];
 	char subsection[64];
+	char subsubsection[64];
 	char key[128];
 	int array_index;
 	bool in_array;
@@ -108,12 +109,23 @@ static int parse_scalar_value(struct yaml_parse_ctx *ctx, const char *value)
 {
 	struct nlmon_config *cfg = ctx->config;
 	char expanded[NLMON_MAX_PATH];
+	const char *section;
 	
 	/* Expand environment variables */
 	expand_env_vars(expanded, sizeof(expanded), value);
 	
+	/* Determine the actual section to use
+	 * If section is "nlmon", use subsection as the section
+	 * This handles the "nlmon:" wrapper in YAML files
+	 */
+	if (strcmp(ctx->section, "nlmon") == 0) {
+		section = ctx->subsection;
+	} else {
+		section = ctx->section;
+	}
+	
 	/* Core configuration */
-	if (strcmp(ctx->section, "core") == 0) {
+	if (strcmp(section, "core") == 0) {
 		if (strcmp(ctx->key, "buffer_size") == 0) {
 			cfg->core.buffer_size = parse_size(expanded);
 		} else if (strcmp(ctx->key, "max_events") == 0) {
@@ -125,8 +137,8 @@ static int parse_scalar_value(struct yaml_parse_ctx *ctx, const char *value)
 		}
 	}
 	/* Monitoring configuration */
-	else if (strcmp(ctx->section, "monitoring") == 0) {
-		if (strcmp(ctx->subsection, "interfaces") == 0) {
+	else if (strcmp(section, "monitoring") == 0) {
+		if (strcmp(ctx->subsubsection, "interfaces") == 0) {
 			if (strcmp(ctx->key, "include") == 0 && ctx->in_array) {
 				if (cfg->monitoring.include_count < NLMON_MAX_INTERFACES) {
 					strncpy(cfg->monitoring.include_patterns[cfg->monitoring.include_count],
@@ -140,32 +152,32 @@ static int parse_scalar_value(struct yaml_parse_ctx *ctx, const char *value)
 					cfg->monitoring.exclude_count++;
 				}
 			}
-		} else if (strcmp(ctx->subsection, "message_types") == 0 && ctx->in_array) {
+		} else if (strcmp(ctx->subsubsection, "message_types") == 0 && ctx->in_array) {
 			if (cfg->monitoring.msg_type_count < NLMON_MAX_MSG_TYPES) {
 				cfg->monitoring.msg_types[cfg->monitoring.msg_type_count] = atoi(expanded);
 				cfg->monitoring.msg_type_count++;
 			}
-		} else if (strcmp(ctx->subsection, "protocols") == 0 && ctx->in_array) {
+		} else if (strcmp(ctx->subsubsection, "protocols") == 0 && ctx->in_array) {
 			if (cfg->monitoring.protocol_count < 8) {
 				cfg->monitoring.protocols[cfg->monitoring.protocol_count] = atoi(expanded);
 				cfg->monitoring.protocol_count++;
 			}
-		} else if (strcmp(ctx->subsection, "namespaces") == 0) {
+		} else if (strcmp(ctx->subsubsection, "namespaces") == 0) {
 			if (strcmp(ctx->key, "enabled") == 0) {
 				cfg->monitoring.namespaces_enabled = parse_bool(expanded);
 			}
 		}
 	}
 	/* Output configuration */
-	else if (strcmp(ctx->section, "output") == 0) {
-		if (strcmp(ctx->subsection, "console") == 0) {
+	else if (strcmp(section, "output") == 0) {
+		if (strcmp(ctx->subsubsection, "console") == 0) {
 			if (strcmp(ctx->key, "enabled") == 0) {
 				cfg->output.console.enabled = parse_bool(expanded);
 			} else if (strcmp(ctx->key, "format") == 0) {
 				strncpy(cfg->output.console.format, expanded,
 				        sizeof(cfg->output.console.format) - 1);
 			}
-		} else if (strcmp(ctx->subsection, "pcap") == 0) {
+		} else if (strcmp(ctx->subsubsection, "pcap") == 0) {
 			if (strcmp(ctx->key, "enabled") == 0) {
 				cfg->output.pcap.enabled = parse_bool(expanded);
 			} else if (strcmp(ctx->key, "file") == 0) {
@@ -174,7 +186,7 @@ static int parse_scalar_value(struct yaml_parse_ctx *ctx, const char *value)
 			} else if (strcmp(ctx->key, "rotate_size") == 0) {
 				cfg->output.pcap.rotate_size = parse_size(expanded);
 			}
-		} else if (strcmp(ctx->subsection, "database") == 0) {
+		} else if (strcmp(ctx->subsubsection, "database") == 0) {
 			if (strcmp(ctx->key, "enabled") == 0) {
 				cfg->output.database.enabled = parse_bool(expanded);
 			} else if (strcmp(ctx->key, "path") == 0) {
@@ -186,7 +198,7 @@ static int parse_scalar_value(struct yaml_parse_ctx *ctx, const char *value)
 		}
 	}
 	/* CLI configuration */
-	else if (strcmp(ctx->section, "cli") == 0) {
+	else if (strcmp(section, "cli") == 0) {
 		if (strcmp(ctx->key, "enabled") == 0) {
 			cfg->cli.enabled = parse_bool(expanded);
 		} else if (strcmp(ctx->key, "refresh_rate") == 0) {
@@ -197,8 +209,8 @@ static int parse_scalar_value(struct yaml_parse_ctx *ctx, const char *value)
 		}
 	}
 	/* Web configuration */
-	else if (strcmp(ctx->section, "web") == 0) {
-		if (strcmp(ctx->subsection, "tls") == 0) {
+	else if (strcmp(section, "web") == 0) {
+		if (strcmp(ctx->subsubsection, "tls") == 0) {
 			if (strcmp(ctx->key, "enabled") == 0) {
 				cfg->web.tls.enabled = parse_bool(expanded);
 			} else if (strcmp(ctx->key, "cert") == 0) {
@@ -217,7 +229,7 @@ static int parse_scalar_value(struct yaml_parse_ctx *ctx, const char *value)
 		}
 	}
 	/* Metrics configuration */
-	else if (strcmp(ctx->section, "metrics") == 0) {
+	else if (strcmp(section, "metrics") == 0) {
 		if (strcmp(ctx->key, "enabled") == 0) {
 			cfg->metrics.enabled = parse_bool(expanded);
 		} else if (strcmp(ctx->key, "port") == 0) {
@@ -228,7 +240,7 @@ static int parse_scalar_value(struct yaml_parse_ctx *ctx, const char *value)
 		}
 	}
 	/* Plugins configuration */
-	else if (strcmp(ctx->section, "plugins") == 0) {
+	else if (strcmp(section, "plugins") == 0) {
 		if (strcmp(ctx->key, "directory") == 0) {
 			strncpy(cfg->plugins.directory, expanded,
 			        sizeof(cfg->plugins.directory) - 1);
@@ -240,23 +252,70 @@ static int parse_scalar_value(struct yaml_parse_ctx *ctx, const char *value)
 			}
 		}
 	}
+	/* Netlink configuration */
+	else if (strcmp(section, "netlink") == 0) {
+		/* Top-level netlink options (no subsubsection) */
+		if (ctx->subsubsection[0] == '\0') {
+			if (strcmp(ctx->key, "use_libnl") == 0) {
+				cfg->netlink.use_libnl = parse_bool(expanded);
+			}
+		} else if (strcmp(ctx->subsubsection, "protocols") == 0) {
+			if (strcmp(ctx->key, "route") == 0) {
+				cfg->netlink.protocols.route = parse_bool(expanded);
+			} else if (strcmp(ctx->key, "generic") == 0) {
+				cfg->netlink.protocols.generic = parse_bool(expanded);
+			} else if (strcmp(ctx->key, "sock_diag") == 0) {
+				cfg->netlink.protocols.sock_diag = parse_bool(expanded);
+			} else if (strcmp(ctx->key, "netfilter") == 0) {
+				cfg->netlink.protocols.netfilter = parse_bool(expanded);
+			}
+		} else if (strcmp(ctx->subsubsection, "buffer_size") == 0) {
+			if (strcmp(ctx->key, "receive") == 0) {
+				cfg->netlink.buffer_size.receive = parse_size(expanded);
+			} else if (strcmp(ctx->key, "send") == 0) {
+				cfg->netlink.buffer_size.send = parse_size(expanded);
+			}
+		} else if (strcmp(ctx->subsubsection, "caching") == 0) {
+			if (strcmp(ctx->key, "enabled") == 0) {
+				cfg->netlink.caching.enabled = parse_bool(expanded);
+			} else if (strcmp(ctx->key, "link_cache") == 0) {
+				cfg->netlink.caching.link_cache = parse_bool(expanded);
+			} else if (strcmp(ctx->key, "addr_cache") == 0) {
+				cfg->netlink.caching.addr_cache = parse_bool(expanded);
+			} else if (strcmp(ctx->key, "route_cache") == 0) {
+				cfg->netlink.caching.route_cache = parse_bool(expanded);
+			}
+		} else if (strcmp(ctx->subsubsection, "multicast_groups") == 0 && ctx->in_array) {
+			if (cfg->netlink.multicast_groups.group_count < NLMON_MAX_MCAST_GROUPS) {
+				strncpy(cfg->netlink.multicast_groups.groups[cfg->netlink.multicast_groups.group_count],
+				        expanded, NLMON_MAX_NAME - 1);
+				cfg->netlink.multicast_groups.group_count++;
+			}
+		} else if (strcmp(ctx->subsubsection, "generic_families") == 0 && ctx->in_array) {
+			if (cfg->netlink.generic_families.family_count < NLMON_MAX_GENL_FAMILIES) {
+				strncpy(cfg->netlink.generic_families.families[cfg->netlink.generic_families.family_count],
+				        expanded, NLMON_MAX_NAME - 1);
+				cfg->netlink.generic_families.family_count++;
+			}
+		}
+	}
 	/* Integration configuration */
-	else if (strcmp(ctx->section, "integration") == 0) {
-		if (strcmp(ctx->subsection, "kubernetes") == 0) {
+	else if (strcmp(section, "integration") == 0) {
+		if (strcmp(ctx->subsubsection, "kubernetes") == 0) {
 			if (strcmp(ctx->key, "enabled") == 0) {
 				cfg->integration.kubernetes.enabled = parse_bool(expanded);
 			} else if (strcmp(ctx->key, "kubeconfig") == 0) {
 				strncpy(cfg->integration.kubernetes.kubeconfig, expanded,
 				        sizeof(cfg->integration.kubernetes.kubeconfig) - 1);
 			}
-		} else if (strcmp(ctx->subsection, "docker") == 0) {
+		} else if (strcmp(ctx->subsubsection, "docker") == 0) {
 			if (strcmp(ctx->key, "enabled") == 0) {
 				cfg->integration.docker.enabled = parse_bool(expanded);
 			} else if (strcmp(ctx->key, "socket") == 0) {
 				strncpy(cfg->integration.docker.socket, expanded,
 				        sizeof(cfg->integration.docker.socket) - 1);
 			}
-		} else if (strcmp(ctx->subsection, "syslog") == 0) {
+		} else if (strcmp(ctx->subsubsection, "syslog") == 0) {
 			if (strcmp(ctx->key, "enabled") == 0) {
 				cfg->integration.syslog.enabled = parse_bool(expanded);
 			} else if (strcmp(ctx->key, "server") == 0) {
@@ -266,7 +325,7 @@ static int parse_scalar_value(struct yaml_parse_ctx *ctx, const char *value)
 				strncpy(cfg->integration.syslog.protocol, expanded,
 				        sizeof(cfg->integration.syslog.protocol) - 1);
 			}
-		} else if (strcmp(ctx->subsection, "snmp") == 0) {
+		} else if (strcmp(ctx->subsubsection, "snmp") == 0) {
 			if (strcmp(ctx->key, "enabled") == 0) {
 				cfg->integration.snmp.enabled = parse_bool(expanded);
 			} else if (strcmp(ctx->key, "trap_receivers") == 0 && ctx->in_array) {
@@ -276,7 +335,7 @@ static int parse_scalar_value(struct yaml_parse_ctx *ctx, const char *value)
 					cfg->integration.snmp.receiver_count++;
 				}
 			}
-		} else if (strcmp(ctx->subsection, "hooks") == 0 && ctx->in_array) {
+		} else if (strcmp(ctx->subsubsection, "hooks") == 0 && ctx->in_array) {
 			/* Parse hook configuration */
 			if (cfg->integration.hook_count < NLMON_MAX_HOOKS) {
 				struct nlmon_hook_config *hook = &cfg->integration.hooks[cfg->integration.hook_count];
@@ -324,20 +383,33 @@ static int parse_yaml_document(struct yaml_parse_ctx *ctx)
 		case YAML_MAPPING_START_EVENT:
 			in_mapping++;
 			mapping_level++;
+			/* If we have a pending key, it becomes the section/subsection/subsubsection */
+			if (last_key[0] != '\0') {
+				if (mapping_level == 2) {
+					strncpy(ctx->subsection, last_key, sizeof(ctx->subsection) - 1);
+					ctx->subsubsection[0] = '\0';
+				} else if (mapping_level == 3) {
+					strncpy(ctx->subsubsection, last_key, sizeof(ctx->subsubsection) - 1);
+				}
+				last_key[0] = '\0';
+			}
 			break;
 			
 		case YAML_MAPPING_END_EVENT:
 			in_mapping--;
 			mapping_level--;
-			if (mapping_level == 1) {
+			if (mapping_level == 2) {
+				/* Exiting subsubsection */
+				ctx->subsubsection[0] = '\0';
+			} else if (mapping_level == 1) {
 				/* Exiting subsection */
 				ctx->subsection[0] = '\0';
 			} else if (mapping_level == 0) {
 				/* Exiting section */
 				ctx->section[0] = '\0';
-			} else if (mapping_level == 2 && ctx->in_array) {
+			} else if (mapping_level == 3 && ctx->in_array) {
 				/* Exiting array item (e.g., hook object) */
-				if (strcmp(ctx->subsection, "hooks") == 0) {
+				if (strcmp(ctx->subsubsection, "hooks") == 0) {
 					if (ctx->config->integration.hook_count < NLMON_MAX_HOOKS)
 						ctx->config->integration.hook_count++;
 				}
@@ -347,6 +419,13 @@ static int parse_yaml_document(struct yaml_parse_ctx *ctx)
 		case YAML_SEQUENCE_START_EVENT:
 			ctx->in_array = true;
 			ctx->array_index = 0;
+			/* If we have a pending key, it becomes the subsubsection for array items */
+			if (last_key[0] != '\0') {
+				if (mapping_level == 2) {
+					strncpy(ctx->subsubsection, last_key, sizeof(ctx->subsubsection) - 1);
+				}
+				last_key[0] = '\0';
+			}
 			break;
 			
 		case YAML_SEQUENCE_END_EVENT:
@@ -358,7 +437,13 @@ static int parse_yaml_document(struct yaml_parse_ctx *ctx)
 			{
 				const char *value = (const char *)event.data.scalar.value;
 				
-				if (in_mapping && last_key[0] == '\0') {
+				/* If we're in an array and there's no pending key,
+				 * treat scalars as array item values */
+				if (ctx->in_array && last_key[0] == '\0') {
+					/* This is an array item value */
+					parse_scalar_value(ctx, value);
+					ctx->array_index++;
+				} else if (in_mapping && last_key[0] == '\0') {
 					/* This is a key */
 					strncpy(last_key, value, sizeof(last_key) - 1);
 					
@@ -366,11 +451,16 @@ static int parse_yaml_document(struct yaml_parse_ctx *ctx)
 						/* Top-level section */
 						strncpy(ctx->section, value, sizeof(ctx->section) - 1);
 						ctx->subsection[0] = '\0';
+						ctx->subsubsection[0] = '\0';
 					} else if (mapping_level == 2) {
 						/* Subsection */
 						strncpy(ctx->subsection, value, sizeof(ctx->subsection) - 1);
-					} else if (mapping_level >= 3) {
-						/* Key in subsection */
+						ctx->subsubsection[0] = '\0';
+					} else if (mapping_level == 3) {
+						/* Sub-subsection */
+						strncpy(ctx->subsubsection, value, sizeof(ctx->subsubsection) - 1);
+					} else if (mapping_level >= 4) {
+						/* Key in sub-subsection */
 						strncpy(ctx->key, value, sizeof(ctx->key) - 1);
 					}
 				} else {

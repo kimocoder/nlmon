@@ -34,7 +34,7 @@ CORE_OBJS := $(CORE_SRCS:.c=.o)
 CONFIG_SRCS   := src/config/config.c src/config/yaml_parser.c src/config/hot_reload.c
 CORE_ENGINE_SRCS := src/core/ring_buffer.c src/core/thread_pool.c src/core/rate_limiter.c src/core/event_processor.c
 MEMORY_MGMT_SRCS := src/core/object_pool.c src/core/event_pool.c src/core/filter_pool.c src/core/resource_tracker.c src/core/signal_handler.c src/core/memory_tracker.c src/core/performance_profiler.c
-NETLINK_SRCS := src/core/netlink_multi_protocol.c src/core/nlmon_netlink.c src/core/nlmon_nl_route.c src/core/nlmon_nl_genl.c src/core/nlmon_nl_diag.c src/core/nlmon_nl_netfilter.c src/core/nlmon_nl_event.c src/core/namespace_tracker.c src/core/interface_detector.c src/core/qca_vendor.c src/core/qca_wmi.c src/core/wmi_log_reader.c src/core/wmi_event_bridge.c src/core/wmi_error.c
+NETLINK_SRCS := src/core/netlink_multi_protocol.c src/core/nlmon_netlink.c src/core/nlmon_nl_route.c src/core/nlmon_nl_genl.c src/core/nlmon_nl_diag.c src/core/nlmon_nl_netfilter.c src/core/nlmon_nl_event.c src/core/nlmon_nl_error.c src/core/nlmon_netlink_compat.c src/core/nlmon_netlink_api.c src/core/namespace_tracker.c src/core/interface_detector.c src/core/qca_vendor.c src/core/qca_wmi.c src/core/wmi_log_reader.c src/core/wmi_event_bridge.c src/core/wmi_error.c
 FILTER_SRCS := src/core/filter_parser.c src/core/filter_compiler.c src/core/filter_eval.c src/core/filter_manager.c
 CORRELATION_SRCS := src/core/time_window.c src/core/correlation_engine.c src/core/pattern_detector.c src/core/anomaly_detector.c
 SECURITY_SRCS := src/core/security_detector.c src/web/access_control.c
@@ -292,8 +292,87 @@ test_libnl_integration: test_libnl_integration.c $(LIBNL_LIB)
 	@echo "  CC      $@"
 	@$(CC) $(CFLAGS) -o $@ $< $(LIBNL_LIB)
 
+# Netlink comprehensive test suite
+NL_UNIT_TEST_SRCS := tests/unit/test_nl_message_parsing.c tests/unit/test_nl_event_translation.c
+NL_UNIT_TEST_BINS := $(NL_UNIT_TEST_SRCS:tests/unit/%.c=test_unit_%)
+
+NL_INTEGRATION_TEST_SRCS := tests/integration/test_nl_integration.c tests/integration/test_nl_e2e.c
+NL_INTEGRATION_TEST_BINS := $(NL_INTEGRATION_TEST_SRCS:tests/integration/%.c=test_integration_%)
+
+NL_BENCHMARK_SRCS := tests/benchmarks/bench_nl_performance.c
+NL_BENCHMARK_BINS := $(NL_BENCHMARK_SRCS:tests/benchmarks/%.c=%)
+
+# Unit test targets for netlink
+test_unit_nl_message_parsing: tests/unit/test_nl_message_parsing.c $(NETLINK_SRCS:.c=.o) $(LIBNL_LIB)
+	@echo "  CC      $@"
+	@$(CC) $(CFLAGS) -Itests/unit -o $@ $< $(NETLINK_SRCS:.c=.o) $(LIBNL_LIB) $(LDLIBS)
+
+test_unit_nl_event_translation: tests/unit/test_nl_event_translation.c $(NETLINK_SRCS:.c=.o) $(LIBNL_LIB)
+	@echo "  CC      $@"
+	@$(CC) $(CFLAGS) -Itests/unit -o $@ $< $(NETLINK_SRCS:.c=.o) $(LIBNL_LIB) $(LDLIBS)
+
+# Integration test targets for netlink
+test_integration_nl_integration: tests/integration/test_nl_integration.c $(NETLINK_SRCS:.c=.o) $(CORE_ENGINE_SRCS:.c=.o) $(MEMORY_MGMT_SRCS:.c=.o) $(LIBNL_LIB)
+	@echo "  CC      $@"
+	@$(CC) $(CFLAGS) -Itests/unit -Itests/integration -o $@ $< $(NETLINK_SRCS:.c=.o) $(CORE_ENGINE_SRCS:.c=.o) $(MEMORY_MGMT_SRCS:.c=.o) $(LIBNL_LIB) $(LDLIBS)
+
+test_integration_nl_e2e: tests/integration/test_nl_e2e.c $(NETLINK_SRCS:.c=.o) $(CORE_ENGINE_SRCS:.c=.o) $(MEMORY_MGMT_SRCS:.c=.o) $(FILTER_SRCS:.c=.o) $(LIBNL_LIB)
+	@echo "  CC      $@"
+	@$(CC) $(CFLAGS) -Itests/unit -Itests/integration -o $@ $< $(NETLINK_SRCS:.c=.o) $(CORE_ENGINE_SRCS:.c=.o) $(MEMORY_MGMT_SRCS:.c=.o) $(FILTER_SRCS:.c=.o) $(LIBNL_LIB) $(LDLIBS)
+
+# Benchmark target for netlink
+bench_nl_performance: tests/benchmarks/bench_nl_performance.c $(NETLINK_SRCS:.c=.o) $(CORE_ENGINE_SRCS:.c=.o) $(MEMORY_MGMT_SRCS:.c=.o) $(LIBNL_LIB)
+	@echo "  CC      $@"
+	@$(CC) $(CFLAGS) -Itests/benchmarks -o $@ $< $(NETLINK_SRCS:.c=.o) $(CORE_ENGINE_SRCS:.c=.o) $(MEMORY_MGMT_SRCS:.c=.o) $(LIBNL_LIB) $(LDLIBS)
+
+# Build all netlink tests
+nl-unit-tests: $(NL_UNIT_TEST_BINS)
+	@echo "Netlink unit tests built successfully"
+
+nl-integration-tests: $(NL_INTEGRATION_TEST_BINS)
+	@echo "Netlink integration tests built successfully"
+
+nl-benchmarks: $(NL_BENCHMARK_BINS)
+	@echo "Netlink benchmarks built successfully"
+
+nl-tests: nl-unit-tests nl-integration-tests nl-benchmarks
+	@echo "All netlink tests built successfully"
+
+# Run netlink tests
+run-nl-unit-tests: nl-unit-tests
+	@echo "Running netlink unit tests..."
+	@for test in $(NL_UNIT_TEST_BINS); do \
+		if [ -f $$test ]; then \
+			echo "Running $$test..."; \
+			./$$test || exit 1; \
+		fi; \
+	done
+	@echo "All netlink unit tests passed!"
+
+run-nl-integration-tests: nl-integration-tests
+	@echo "Running netlink integration tests..."
+	@for test in $(NL_INTEGRATION_TEST_BINS); do \
+		if [ -f $$test ]; then \
+			echo "Running $$test..."; \
+			./$$test || exit 1; \
+		fi; \
+	done
+	@echo "All netlink integration tests passed!"
+
+run-nl-benchmarks: nl-benchmarks
+	@echo "Running netlink benchmarks..."
+	@for bench in $(NL_BENCHMARK_BINS); do \
+		if [ -f $$bench ]; then \
+			./$$bench; \
+		fi; \
+	done
+
+run-nl-tests: run-nl-unit-tests run-nl-integration-tests run-nl-benchmarks
+	@echo ""
+	@echo "All netlink tests completed successfully!"
+
 # Combined test target
-test-all: run-unit-tests integration-tests run-benchmarks run-wmi-tests
+test-all: run-unit-tests integration-tests run-benchmarks run-wmi-tests run-nl-tests
 	@echo ""
 	@echo "All tests completed successfully!"
 

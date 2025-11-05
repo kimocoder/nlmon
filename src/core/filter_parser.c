@@ -104,6 +104,7 @@ static bool is_keyword(const char *str, const char *keyword)
 
 static enum filter_field_type parse_field_name(const char *name)
 {
+	/* Basic fields */
 	if (strcasecmp(name, "interface") == 0)
 		return FILTER_FIELD_INTERFACE;
 	if (strcasecmp(name, "message_type") == 0)
@@ -116,6 +117,142 @@ static enum filter_field_type parse_field_name(const char *name)
 		return FILTER_FIELD_TIMESTAMP;
 	if (strcasecmp(name, "sequence") == 0)
 		return FILTER_FIELD_SEQUENCE;
+	
+	/* Netlink common fields */
+	if (strcasecmp(name, "netlink.protocol") == 0)
+		return FILTER_FIELD_NL_PROTOCOL;
+	if (strcasecmp(name, "netlink.msg_type") == 0)
+		return FILTER_FIELD_NL_MSG_TYPE;
+	if (strcasecmp(name, "netlink.msg_flags") == 0)
+		return FILTER_FIELD_NL_MSG_FLAGS;
+	if (strcasecmp(name, "netlink.seq") == 0)
+		return FILTER_FIELD_NL_SEQ;
+	if (strcasecmp(name, "netlink.pid") == 0)
+		return FILTER_FIELD_NL_PID;
+	if (strcasecmp(name, "netlink.genl_cmd") == 0)
+		return FILTER_FIELD_NL_GENL_CMD;
+	if (strcasecmp(name, "netlink.genl_version") == 0)
+		return FILTER_FIELD_NL_GENL_VERSION;
+	if (strcasecmp(name, "netlink.genl_family_id") == 0)
+		return FILTER_FIELD_NL_GENL_FAMILY_ID;
+	if (strcasecmp(name, "netlink.genl_family_name") == 0)
+		return FILTER_FIELD_NL_GENL_FAMILY_NAME;
+	
+	/* NETLINK_ROUTE link fields */
+	if (strcasecmp(name, "netlink.link.ifname") == 0)
+		return FILTER_FIELD_NL_LINK_IFNAME;
+	if (strcasecmp(name, "netlink.link.ifindex") == 0)
+		return FILTER_FIELD_NL_LINK_IFINDEX;
+	if (strcasecmp(name, "netlink.link.flags") == 0)
+		return FILTER_FIELD_NL_LINK_FLAGS;
+	if (strcasecmp(name, "netlink.link.mtu") == 0)
+		return FILTER_FIELD_NL_LINK_MTU;
+	if (strcasecmp(name, "netlink.link.operstate") == 0)
+		return FILTER_FIELD_NL_LINK_OPERSTATE;
+	if (strcasecmp(name, "netlink.link.qdisc") == 0)
+		return FILTER_FIELD_NL_LINK_QDISC;
+	
+	/* NETLINK_ROUTE address fields */
+	if (strcasecmp(name, "netlink.addr.family") == 0)
+		return FILTER_FIELD_NL_ADDR_FAMILY;
+	if (strcasecmp(name, "netlink.addr.ifindex") == 0)
+		return FILTER_FIELD_NL_ADDR_IFINDEX;
+	if (strcasecmp(name, "netlink.addr.prefixlen") == 0)
+		return FILTER_FIELD_NL_ADDR_PREFIXLEN;
+	if (strcasecmp(name, "netlink.addr.scope") == 0)
+		return FILTER_FIELD_NL_ADDR_SCOPE;
+	if (strcasecmp(name, "netlink.addr.addr") == 0)
+		return FILTER_FIELD_NL_ADDR_ADDR;
+	if (strcasecmp(name, "netlink.addr.label") == 0)
+		return FILTER_FIELD_NL_ADDR_LABEL;
+	
+	/* NETLINK_ROUTE route fields */
+	if (strcasecmp(name, "netlink.route.family") == 0)
+		return FILTER_FIELD_NL_ROUTE_FAMILY;
+	if (strcasecmp(name, "netlink.route.dst") == 0)
+		return FILTER_FIELD_NL_ROUTE_DST;
+	if (strcasecmp(name, "netlink.route.src") == 0)
+		return FILTER_FIELD_NL_ROUTE_SRC;
+	if (strcasecmp(name, "netlink.route.gateway") == 0)
+		return FILTER_FIELD_NL_ROUTE_GATEWAY;
+	if (strcasecmp(name, "netlink.route.oif") == 0)
+		return FILTER_FIELD_NL_ROUTE_OIF;
+	if (strcasecmp(name, "netlink.route.protocol") == 0)
+		return FILTER_FIELD_NL_ROUTE_PROTOCOL;
+	if (strcasecmp(name, "netlink.route.scope") == 0)
+		return FILTER_FIELD_NL_ROUTE_SCOPE;
+	if (strcasecmp(name, "netlink.route.type") == 0)
+		return FILTER_FIELD_NL_ROUTE_TYPE;
+	if (strcasecmp(name, "netlink.route.priority") == 0)
+		return FILTER_FIELD_NL_ROUTE_PRIORITY;
+	
+	/* NETLINK_ROUTE neighbor fields */
+	if (strcasecmp(name, "netlink.neigh.family") == 0)
+		return FILTER_FIELD_NL_NEIGH_FAMILY;
+	if (strcasecmp(name, "netlink.neigh.ifindex") == 0)
+		return FILTER_FIELD_NL_NEIGH_IFINDEX;
+	if (strcasecmp(name, "netlink.neigh.state") == 0)
+		return FILTER_FIELD_NL_NEIGH_STATE;
+	if (strcasecmp(name, "netlink.neigh.dst") == 0)
+		return FILTER_FIELD_NL_NEIGH_DST;
+	
+	/* NETLINK_SOCK_DIAG fields */
+	if (strcasecmp(name, "netlink.diag.family") == 0)
+		return FILTER_FIELD_NL_DIAG_FAMILY;
+	if (strcasecmp(name, "netlink.diag.state") == 0)
+		return FILTER_FIELD_NL_DIAG_STATE;
+	if (strcasecmp(name, "netlink.diag.protocol") == 0)
+		return FILTER_FIELD_NL_DIAG_PROTOCOL;
+	if (strcasecmp(name, "netlink.diag.src_port") == 0)
+		return FILTER_FIELD_NL_DIAG_SRC_PORT;
+	if (strcasecmp(name, "netlink.diag.dst_port") == 0)
+		return FILTER_FIELD_NL_DIAG_DST_PORT;
+	if (strcasecmp(name, "netlink.diag.src_addr") == 0)
+		return FILTER_FIELD_NL_DIAG_SRC_ADDR;
+	if (strcasecmp(name, "netlink.diag.dst_addr") == 0)
+		return FILTER_FIELD_NL_DIAG_DST_ADDR;
+	if (strcasecmp(name, "netlink.diag.uid") == 0)
+		return FILTER_FIELD_NL_DIAG_UID;
+	if (strcasecmp(name, "netlink.diag.inode") == 0)
+		return FILTER_FIELD_NL_DIAG_INODE;
+	
+	/* NETLINK_NETFILTER conntrack fields */
+	if (strcasecmp(name, "netlink.ct.protocol") == 0)
+		return FILTER_FIELD_NL_CT_PROTOCOL;
+	if (strcasecmp(name, "netlink.ct.tcp_state") == 0)
+		return FILTER_FIELD_NL_CT_TCP_STATE;
+	if (strcasecmp(name, "netlink.ct.src_addr") == 0)
+		return FILTER_FIELD_NL_CT_SRC_ADDR;
+	if (strcasecmp(name, "netlink.ct.dst_addr") == 0)
+		return FILTER_FIELD_NL_CT_DST_ADDR;
+	if (strcasecmp(name, "netlink.ct.src_port") == 0)
+		return FILTER_FIELD_NL_CT_SRC_PORT;
+	if (strcasecmp(name, "netlink.ct.dst_port") == 0)
+		return FILTER_FIELD_NL_CT_DST_PORT;
+	if (strcasecmp(name, "netlink.ct.mark") == 0)
+		return FILTER_FIELD_NL_CT_MARK;
+	
+	/* NETLINK_GENERIC nl80211 fields */
+	if (strcasecmp(name, "netlink.nl80211.cmd") == 0)
+		return FILTER_FIELD_NL_NL80211_CMD;
+	if (strcasecmp(name, "netlink.nl80211.wiphy") == 0)
+		return FILTER_FIELD_NL_NL80211_WIPHY;
+	if (strcasecmp(name, "netlink.nl80211.ifindex") == 0)
+		return FILTER_FIELD_NL_NL80211_IFINDEX;
+	if (strcasecmp(name, "netlink.nl80211.ifname") == 0)
+		return FILTER_FIELD_NL_NL80211_IFNAME;
+	if (strcasecmp(name, "netlink.nl80211.iftype") == 0)
+		return FILTER_FIELD_NL_NL80211_IFTYPE;
+	if (strcasecmp(name, "netlink.nl80211.freq") == 0)
+		return FILTER_FIELD_NL_NL80211_FREQ;
+	
+	/* QCA vendor fields */
+	if (strcasecmp(name, "netlink.qca.subcmd") == 0)
+		return FILTER_FIELD_NL_QCA_SUBCMD;
+	if (strcasecmp(name, "netlink.qca.subcmd_name") == 0)
+		return FILTER_FIELD_NL_QCA_SUBCMD_NAME;
+	if (strcasecmp(name, "netlink.qca.vendor_id") == 0)
+		return FILTER_FIELD_NL_QCA_VENDOR_ID;
 	
 	return FILTER_FIELD_INTERFACE; /* Default */
 }
@@ -171,7 +308,8 @@ static char *lexer_read_identifier(struct lexer *l)
 	size_t len = 0;
 	char *result;
 	
-	while (isalnum(lexer_peek(l)) || lexer_peek(l) == '_') {
+	/* Allow alphanumeric, underscore, and dot for nested field paths */
+	while (isalnum(lexer_peek(l)) || lexer_peek(l) == '_' || lexer_peek(l) == '.') {
 		lexer_advance(l);
 		len++;
 	}

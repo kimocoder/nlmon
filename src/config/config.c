@@ -55,6 +55,24 @@ int nlmon_config_init(struct nlmon_config *config)
 	config->monitoring.protocols[0] = 0; /* NETLINK_ROUTE */
 	config->monitoring.namespaces_enabled = false;
 	
+	/* Netlink defaults */
+	config->netlink.use_libnl = true;  /* Default to new libnl-based implementation */
+	config->netlink.protocols.route = true;
+	config->netlink.protocols.generic = false;
+	config->netlink.protocols.sock_diag = false;
+	config->netlink.protocols.netfilter = false;
+	
+	config->netlink.buffer_size.receive = 32768;
+	config->netlink.buffer_size.send = 32768;
+	
+	config->netlink.caching.enabled = false;
+	config->netlink.caching.link_cache = false;
+	config->netlink.caching.addr_cache = false;
+	config->netlink.caching.route_cache = false;
+	
+	config->netlink.multicast_groups.group_count = 0;
+	config->netlink.generic_families.family_count = 0;
+	
 	/* Output defaults */
 	config->output.console.enabled = true;
 	strncpy(config->output.console.format, "text", sizeof(config->output.console.format) - 1);
@@ -196,6 +214,35 @@ int nlmon_config_validate(const struct nlmon_config *config)
 		}
 	}
 	
+	/* Validate netlink configuration */
+	if (config->netlink.buffer_size.receive < 4096 || 
+	    config->netlink.buffer_size.receive > (10 * 1024 * 1024)) {
+		fprintf(stderr, "Invalid netlink receive buffer size: %zu (must be between 4KB and 10MB)\n",
+		        config->netlink.buffer_size.receive);
+		return NLMON_CONFIG_ERR_VALIDATION;
+	}
+	
+	if (config->netlink.buffer_size.send < 4096 || 
+	    config->netlink.buffer_size.send > (10 * 1024 * 1024)) {
+		fprintf(stderr, "Invalid netlink send buffer size: %zu (must be between 4KB and 10MB)\n",
+		        config->netlink.buffer_size.send);
+		return NLMON_CONFIG_ERR_VALIDATION;
+	}
+	
+	if (config->netlink.multicast_groups.group_count < 0 ||
+	    config->netlink.multicast_groups.group_count > NLMON_MAX_MCAST_GROUPS) {
+		fprintf(stderr, "Invalid multicast group count: %d\n",
+		        config->netlink.multicast_groups.group_count);
+		return NLMON_CONFIG_ERR_VALIDATION;
+	}
+	
+	if (config->netlink.generic_families.family_count < 0 ||
+	    config->netlink.generic_families.family_count > NLMON_MAX_GENL_FAMILIES) {
+		fprintf(stderr, "Invalid generic netlink family count: %d\n",
+		        config->netlink.generic_families.family_count);
+		return NLMON_CONFIG_ERR_VALIDATION;
+	}
+	
 	return NLMON_CONFIG_OK;
 }
 
@@ -329,6 +376,17 @@ void nlmon_config_get_web(struct nlmon_config_ctx *ctx,
 	
 	pthread_rwlock_rdlock(&ctx->current->lock);
 	memcpy(web, &ctx->current->web, sizeof(*web));
+	pthread_rwlock_unlock(&ctx->current->lock);
+}
+
+void nlmon_config_get_netlink(struct nlmon_config_ctx *ctx,
+                              struct nlmon_netlink_config *netlink)
+{
+	if (!ctx || !ctx->current || !netlink)
+		return;
+	
+	pthread_rwlock_rdlock(&ctx->current->lock);
+	memcpy(netlink, &ctx->current->netlink, sizeof(*netlink));
 	pthread_rwlock_unlock(&ctx->current->lock);
 }
 

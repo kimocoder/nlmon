@@ -51,18 +51,27 @@ int nlmon_route_msg_handler(struct nl_msg *msg, void *arg)
 	switch (nlh->nlmsg_type) {
 	case RTM_NEWLINK:
 	case RTM_DELLINK:
+		/* Update link cache if enabled */
+		nlmon_nl_cache_update_link(mgr, msg);
+		
 		ret = nlmon_parse_link_msg(nlh, &evt);
 		evt.event_type = nlh->nlmsg_type;
 		break;
 		
 	case RTM_NEWADDR:
 	case RTM_DELADDR:
+		/* Update address cache if enabled */
+		nlmon_nl_cache_update_addr(mgr, msg);
+		
 		ret = nlmon_parse_addr_msg(nlh, &evt);
 		evt.event_type = nlh->nlmsg_type;
 		break;
 		
 	case RTM_NEWROUTE:
 	case RTM_DELROUTE:
+		/* Update route cache if enabled */
+		nlmon_nl_cache_update_route(mgr, msg);
+		
 		ret = nlmon_parse_route_msg(nlh, &evt);
 		evt.event_type = nlh->nlmsg_type;
 		break;

@@ -105,7 +105,7 @@ int nlmon_parse_inet_diag_msg(struct nlmsghdr *nlh, struct nlmon_event *evt)
 		return -EINVAL;
 	
 	/* Verify message has enough data for inet_diag_msg */
-	if (nlmsg_len(nlh) < sizeof(*diag_msg)) {
+	if ((size_t)nlmsg_len(nlh) < sizeof(*diag_msg)) {
 		fprintf(stderr, "inet_diag message too short\n");
 		return -EINVAL;
 	}

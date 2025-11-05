@@ -13,6 +13,7 @@ extern "C" {
 struct nlmsghdr;
 struct nlmon_event;
 struct nlmon_nl_manager;
+struct nl_msg;
 
 /**
  * nl80211 information structure

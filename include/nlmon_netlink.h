@@ -17,8 +17,35 @@
 extern "C" {
 #endif
 
+/* Logging levels for netlink operations */
+enum nlmon_nl_log_level {
+	NLMON_NL_LOG_ERROR = 0,   /* Error messages */
+	NLMON_NL_LOG_WARN = 1,    /* Warning messages */
+	NLMON_NL_LOG_INFO = 2,    /* Informational messages */
+	NLMON_NL_LOG_DEBUG = 3,   /* Debug messages */
+};
+
+/* Set logging level for netlink operations */
+void nlmon_nl_set_log_level(enum nlmon_nl_log_level level);
+
+/* Get current logging level */
+enum nlmon_nl_log_level nlmon_nl_get_log_level(void);
+
+/* Enable/disable message dumping on parse errors */
+void nlmon_nl_set_dump_on_error(int enable);
+
+/* Log netlink error with context */
+void nlmon_nl_log_error(const char *context, int error);
+
+/* Log netlink message details (for debugging) */
+void nlmon_nl_log_message(struct nlmsghdr *nlh, const char *direction);
+
+/* Dump netlink message in hex format */
+void nlmon_nl_dump_message(struct nlmsghdr *nlh, size_t len);
+
 /* Forward declarations */
 struct nlmon_event;
+struct nlmon_netlink_config;
 
 /**
  * nlmon netlink manager structure
@@ -225,6 +252,182 @@ int nlmon_nl_process_nf(struct nlmon_nl_manager *mgr);
 void nlmon_nl_set_callback(struct nlmon_nl_manager *mgr,
                            void (*cb)(struct nlmon_event *, void *),
                            void *user_data);
+
+/**
+ * Apply configuration to netlink manager
+ * 
+ * Configures the netlink manager based on the provided configuration.
+ * Enables/disables protocols, sets buffer sizes, initializes caches,
+ * and subscribes to multicast groups as specified.
+ * 
+ * @param mgr Netlink manager
+ * @param config Netlink configuration to apply
+ * @return 0 on success, negative error code on failure
+ */
+int nlmon_nl_apply_config(struct nlmon_nl_manager *mgr,
+                          const struct nlmon_netlink_config *config);
+
+/**
+ * Reconnect a netlink socket after connection loss
+ * 
+ * Attempts to reconnect a netlink socket that has been disconnected.
+ * This function will close the existing socket and create a new one.
+ * 
+ * @param mgr Netlink manager
+ * @param protocol Protocol to reconnect (NETLINK_ROUTE, NETLINK_GENERIC, etc.)
+ * @return 0 on success, negative error code on failure
+ */
+int nlmon_nl_reconnect(struct nlmon_nl_manager *mgr, int protocol);
+
+/**
+ * Check if a netlink socket is still connected
+ * 
+ * Verifies that a netlink socket is still valid and connected.
+ * 
+ * @param mgr Netlink manager
+ * @param protocol Protocol to check
+ * @return 1 if connected, 0 if not connected, negative on error
+ */
+int nlmon_nl_is_connected(struct nlmon_nl_manager *mgr, int protocol);
+
+/**
+ * Handle message parse error
+ * 
+ * Called when a message parse error occurs. Logs the error and
+ * optionally dumps the message for debugging.
+ * 
+ * @param mgr Netlink manager
+ * @param msg Netlink message that failed to parse
+ * @param error Error code from parse operation
+ * @return 0 to continue processing, negative to abort
+ */
+int nlmon_nl_handle_parse_error(struct nlmon_nl_manager *mgr,
+                                 struct nl_msg *msg,
+                                 int error);
+
+/**
+ * Initialize link cache
+ * 
+ * Creates and populates a cache of network interfaces (links).
+ * The cache is automatically updated when link events are received.
+ * 
+ * @param mgr Netlink manager
+ * @return 0 on success, negative error code on failure
+ */
+int nlmon_nl_cache_init_link(struct nlmon_nl_manager *mgr);
+
+/**
+ * Initialize address cache
+ * 
+ * Creates and populates a cache of IP addresses.
+ * The cache is automatically updated when address events are received.
+ * 
+ * @param mgr Netlink manager
+ * @return 0 on success, negative error code on failure
+ */
+int nlmon_nl_cache_init_addr(struct nlmon_nl_manager *mgr);
+
+/**
+ * Initialize route cache (optional)
+ * 
+ * Creates and populates a cache of routing table entries.
+ * The cache is automatically updated when route events are received.
+ * 
+ * @param mgr Netlink manager
+ * @return 0 on success, negative error code on failure
+ */
+int nlmon_nl_cache_init_route(struct nlmon_nl_manager *mgr);
+
+/**
+ * Refresh all initialized caches
+ * 
+ * Requests a full dump from the kernel to refresh all active caches.
+ * 
+ * @param mgr Netlink manager
+ * @return 0 on success, negative error code on failure
+ */
+int nlmon_nl_cache_refresh_all(struct nlmon_nl_manager *mgr);
+
+/**
+ * Update link cache with a netlink message
+ * 
+ * Called when RTM_NEWLINK or RTM_DELLINK messages are received.
+ * 
+ * @param mgr Netlink manager
+ * @param msg Netlink message
+ * @return 0 on success, negative error code on failure
+ */
+int nlmon_nl_cache_update_link(struct nlmon_nl_manager *mgr, struct nl_msg *msg);
+
+/**
+ * Update address cache with a netlink message
+ * 
+ * Called when RTM_NEWADDR or RTM_DELADDR messages are received.
+ * 
+ * @param mgr Netlink manager
+ * @param msg Netlink message
+ * @return 0 on success, negative error code on failure
+ */
+int nlmon_nl_cache_update_addr(struct nlmon_nl_manager *mgr, struct nl_msg *msg);
+
+/**
+ * Update route cache with a netlink message
+ * 
+ * Called when RTM_NEWROUTE or RTM_DELROUTE messages are received.
+ * 
+ * @param mgr Netlink manager
+ * @param msg Netlink message
+ * @return 0 on success, negative error code on failure
+ */
+int nlmon_nl_cache_update_route(struct nlmon_nl_manager *mgr, struct nl_msg *msg);
+
+/**
+ * Get link information by interface index
+ * 
+ * Searches the link cache for an interface with the specified index.
+ * 
+ * @param mgr Netlink manager
+ * @param ifindex Interface index
+ * @param ifname Buffer to store interface name (at least IFNAMSIZ bytes)
+ * @return 0 on success, -ENOENT if not found, negative error code on failure
+ */
+int nlmon_nl_get_link_by_index(struct nlmon_nl_manager *mgr, int ifindex, char *ifname);
+
+/**
+ * Get link information by interface name
+ * 
+ * Searches the link cache for an interface with the specified name.
+ * 
+ * @param mgr Netlink manager
+ * @param ifname Interface name
+ * @param ifindex Pointer to store interface index
+ * @return 0 on success, -ENOENT if not found, negative error code on failure
+ */
+int nlmon_nl_get_link_by_name(struct nlmon_nl_manager *mgr, const char *ifname, int *ifindex);
+
+/**
+ * Get number of items in link cache
+ * 
+ * @param mgr Netlink manager
+ * @return Number of cached links, or -1 if cache not initialized
+ */
+int nlmon_nl_get_link_count(struct nlmon_nl_manager *mgr);
+
+/**
+ * Get number of items in address cache
+ * 
+ * @param mgr Netlink manager
+ * @return Number of cached addresses, or -1 if cache not initialized
+ */
+int nlmon_nl_get_addr_count(struct nlmon_nl_manager *mgr);
+
+/**
+ * Get number of items in route cache
+ * 
+ * @param mgr Netlink manager
+ * @return Number of cached routes, or -1 if cache not initialized
+ */
+int nlmon_nl_get_route_count(struct nlmon_nl_manager *mgr);
 
 #ifdef __cplusplus
 }

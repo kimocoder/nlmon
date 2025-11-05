@@ -11,6 +11,7 @@ extern "C" {
 struct nlmsghdr;
 struct nlmon_event;
 struct nlmon_nl_manager;
+struct nl_msg;
 
 /**
  * Connection tracking information structure
