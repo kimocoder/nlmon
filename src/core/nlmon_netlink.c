@@ -37,6 +37,17 @@ extern int nlmon_diag_msg_handler(struct nl_msg *msg, void *arg);
 extern int nlmon_nf_msg_handler(struct nl_msg *msg, void *arg);
 
 /**
+ * No-op sequence check callback
+ * Used to disable sequence number checking for asynchronous netlink events
+ */
+static int noop_seq_check(struct nl_msg *msg, void *arg)
+{
+	(void)msg;
+	(void)arg;
+	return NL_OK;
+}
+
+/**
  * Initialize netlink manager
  */
 struct nlmon_nl_manager *nlmon_nl_manager_init(void)
@@ -211,7 +222,7 @@ int nlmon_nl_enable_route(struct nlmon_nl_manager *mgr)
 	}
 	
 	/* Disable sequence number checking in callback for asynchronous events */
-	nl_cb_set(mgr->route_cb, NL_CB_SEQ_CHECK, NL_CB_CUSTOM, NULL, NULL);
+	nl_cb_set(mgr->route_cb, NL_CB_SEQ_CHECK, NL_CB_CUSTOM, noop_seq_check, NULL);
 	
 	/* Set up route message callback handler */
 	nl_cb_set(mgr->route_cb, NL_CB_VALID, NL_CB_CUSTOM, nlmon_route_msg_handler, mgr);
