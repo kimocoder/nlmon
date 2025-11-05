@@ -21,6 +21,10 @@ struct nlmon_link_info;
 struct nlmon_addr_info;
 struct nlmon_route_info;
 struct nlmon_neigh_info;
+struct nlmon_diag_info;
+struct nlmon_ct_info;
+struct nlmon_nl80211_info;
+struct nlmon_qca_vendor_info;
 
 /* Event structure for processing */
 struct nlmon_event {
@@ -53,6 +57,10 @@ struct nlmon_event {
 			struct nlmon_addr_info *addr;
 			struct nlmon_route_info *route;
 			struct nlmon_neigh_info *neigh;
+			struct nlmon_diag_info *diag;
+			struct nlmon_ct_info *conntrack;
+			struct nlmon_nl80211_info *nl80211;
+			struct nlmon_qca_vendor_info *qca_vendor;
 			void *generic;
 		} data;
 	} netlink;

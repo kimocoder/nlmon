@@ -22,10 +22,14 @@
 #include "nlmon_netlink.h"
 #include "nlmon_nl_route.h"
 #include "nlmon_nl_genl.h"
+#include "nlmon_nl_diag.h"
+#include "nlmon_nl_netfilter.h"
 
 /* Forward declarations of message handlers */
 extern int nlmon_route_msg_handler(struct nl_msg *msg, void *arg);
 extern int nlmon_genl_msg_handler(struct nl_msg *msg, void *arg);
+extern int nlmon_diag_msg_handler(struct nl_msg *msg, void *arg);
+extern int nlmon_nf_msg_handler(struct nl_msg *msg, void *arg);
 
 /**
  * Initialize netlink manager
@@ -347,7 +351,8 @@ int nlmon_nl_enable_diag(struct nlmon_nl_manager *mgr)
 		return -ENOMEM;
 	}
 	
-	/* TODO: Set up callbacks in later tasks */
+	/* Set up socket diagnostics message callback handler */
+	nl_cb_set(mgr->diag_cb, NL_CB_VALID, NL_CB_CUSTOM, nlmon_diag_msg_handler, mgr);
 	
 	mgr->enable_diag = 1;
 	
@@ -417,7 +422,8 @@ int nlmon_nl_enable_netfilter(struct nlmon_nl_manager *mgr)
 		return -ENOMEM;
 	}
 	
-	/* TODO: Set up callbacks in later tasks */
+	/* Set up netfilter message callback handler */
+	nl_cb_set(mgr->nf_cb, NL_CB_VALID, NL_CB_CUSTOM, nlmon_nf_msg_handler, mgr);
 	
 	mgr->enable_netfilter = 1;
 	

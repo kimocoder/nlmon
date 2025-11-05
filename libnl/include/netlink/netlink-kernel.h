@@ -2,6 +2,12 @@
 #define __LINUX_NETLINK_H
 
 /**
+ * Alignment for netlink messages
+ */
+#define NLMSG_ALIGNTO   4U
+#define NLMSG_ALIGN(len) ( ((len)+NLMSG_ALIGNTO-1) & ~(NLMSG_ALIGNTO-1) )
+
+/**
  * Netlink socket address
  * @ingroup nl
  */
@@ -51,6 +57,11 @@ struct nlmsghdr
 	 */
 	uint32_t	nlmsg_pid;
 };
+
+/**
+ * Length of netlink message header
+ */
+#define NLMSG_HDRLEN        ((int) NLMSG_ALIGN(sizeof(struct nlmsghdr)))
 
 /**
  * @name Standard message flags

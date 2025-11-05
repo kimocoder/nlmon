@@ -18,11 +18,20 @@
 
 #include <stdio.h>
 #include <stdint.h>
-#include <sys/socket.h>
 #include <sys/types.h>
+#include <sys/socket.h>  /* For struct ucred */
 #include <netlink/netlink-compat.h>
 #include <netlink/netlink-kernel.h>
 #include <netlink/types.h>
+
+/* Forward declaration for struct ucred if not available */
+#ifndef __USE_GNU
+struct ucred {
+	pid_t pid;
+	uid_t uid;
+	gid_t gid;
+};
+#endif
 
 #ifdef __cplusplus
 extern "C" {

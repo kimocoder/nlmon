@@ -34,7 +34,7 @@ CORE_OBJS := $(CORE_SRCS:.c=.o)
 CONFIG_SRCS   := src/config/config.c src/config/yaml_parser.c src/config/hot_reload.c
 CORE_ENGINE_SRCS := src/core/ring_buffer.c src/core/thread_pool.c src/core/rate_limiter.c src/core/event_processor.c
 MEMORY_MGMT_SRCS := src/core/object_pool.c src/core/event_pool.c src/core/filter_pool.c src/core/resource_tracker.c src/core/signal_handler.c src/core/memory_tracker.c src/core/performance_profiler.c
-NETLINK_SRCS := src/core/netlink_multi_protocol.c src/core/nlmon_netlink.c src/core/nlmon_nl_route.c src/core/nlmon_nl_genl.c src/core/namespace_tracker.c src/core/interface_detector.c src/core/qca_vendor.c src/core/qca_wmi.c src/core/wmi_log_reader.c src/core/wmi_event_bridge.c src/core/wmi_error.c
+NETLINK_SRCS := src/core/netlink_multi_protocol.c src/core/nlmon_netlink.c src/core/nlmon_nl_route.c src/core/nlmon_nl_genl.c src/core/nlmon_nl_diag.c src/core/nlmon_nl_netfilter.c src/core/nlmon_nl_event.c src/core/namespace_tracker.c src/core/interface_detector.c src/core/qca_vendor.c src/core/qca_wmi.c src/core/wmi_log_reader.c src/core/wmi_event_bridge.c src/core/wmi_error.c
 FILTER_SRCS := src/core/filter_parser.c src/core/filter_compiler.c src/core/filter_eval.c src/core/filter_manager.c
 CORRELATION_SRCS := src/core/time_window.c src/core/correlation_engine.c src/core/pattern_detector.c src/core/anomaly_detector.c
 SECURITY_SRCS := src/core/security_detector.c src/web/access_control.c
@@ -55,10 +55,10 @@ ALL_OBJS := $(CORE_OBJS) $(CORE_ENGINE_SRCS:.c=.o) $(MEMORY_MGMT_SRCS:.c=.o) $(N
 CORE_LIBS := libnl-route-3.0 libnl-3.0
 LDLIBS := $(shell pkg-config --libs $(CORE_LIBS))
 LDLIBS += -lev -lncursesw -lpthread -lm -lcurl
-CFLAGS := $(shell pkg-config --cflags $(CORE_LIBS))
+# Prioritize libnl-tiny includes over system libnl - must come BEFORE pkg-config
+CFLAGS := $(LIBNL_INCLUDES) -Iinclude
+CFLAGS += $(shell pkg-config --cflags $(CORE_LIBS))
 CFLAGS += -g -Og -W -Wall -Wextra -Wno-unused-parameter
-# Prioritize libnl-tiny includes over system libnl
-CFLAGS += $(LIBNL_INCLUDES) -Iinclude
 
 # Check for optional dependencies and set feature flags
 ifeq ($(ENABLE_CONFIG),1)

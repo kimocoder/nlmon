@@ -12,6 +12,10 @@
 #ifndef NETLINK_MSG_H_
 #define NETLINK_MSG_H_
 
+#ifndef _GNU_SOURCE
+#define _GNU_SOURCE
+#endif
+
 #include <sys/socket.h>
 #include <netlink/netlink.h>
 #include <netlink/object.h>
