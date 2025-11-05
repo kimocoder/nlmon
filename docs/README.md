@@ -45,6 +45,36 @@ Welcome to the nlmon documentation! This directory contains comprehensive docume
   - Memory management strategies
   - Performance considerations
 
+- **[Netlink Integration Guide](NETLINK_INTEGRATION.md)** - Netlink subsystem integration
+  - libnl-tiny integration architecture
+  - Protocol handlers (ROUTE, GENERIC, SOCK_DIAG, NETFILTER)
+  - Event translation layer
+  - Configuration and usage examples
+  - Performance considerations
+  - Troubleshooting
+
+- **[Netlink API Documentation](NETLINK_API.md)** - Complete netlink API reference
+  - Netlink manager API
+  - Protocol-specific handlers
+  - Event structure enhancements
+  - Filter API extensions
+  - Error handling
+  - Code examples
+
+- **[Netlink Migration Guide](NETLINK_MIGRATION.md)** - Migration from legacy to libnl
+  - Implementation comparison
+  - Migration steps and scenarios
+  - API changes and compatibility
+  - Troubleshooting migration issues
+  - Testing and validation
+  - Rollback procedures
+
+- **[Netlink Filtering Guide](NETLINK_FILTERING.md)** - Advanced filtering on netlink attributes
+  - Filter expression syntax
+  - Protocol-specific filters
+  - Performance optimization
+  - Examples and patterns
+
 - **[Plugin Development Guide](PLUGIN_DEVELOPMENT_GUIDE.md)** - Complete plugin development guide
   - Getting started with plugins
   - Plugin API reference
@@ -70,6 +100,28 @@ Welcome to the nlmon documentation! This directory contains comprehensive docume
   - Testing guidelines
   - Pull request process
   - Issue reporting
+
+### Feature-Specific Documentation
+
+- **[QCA Vendor Support](QCA_VENDOR_SUPPORT.md)** - Qualcomm Atheros vendor commands
+  - QCA vendor command monitoring
+  - WMI event integration
+  - Configuration and usage
+
+- **[WMI Monitoring](WMI_MONITORING.md)** - WiFi Management Interface monitoring
+  - WMI log parsing
+  - Event bridge integration
+  - Performance analysis
+
+- **[Event Hooks](EVENT_HOOKS.md)** - Event-driven automation
+  - Hook configuration
+  - Script execution
+  - Use cases and examples
+
+- **[Alert System](ALERT_SYSTEM.md)** - Alert configuration and management
+  - Alert rules and conditions
+  - Notification channels
+  - Alert aggregation
 
 ### Additional Resources
 

@@ -148,6 +148,7 @@ static int use_nlmon = 0;
 static char *nlmon_device = NULL;
 static char *pcap_file = NULL;
 static int verbose_mode = 0;
+static int debug_netlink = 0;  /* Debug mode for netlink messages */
 static int nlmon_sock = -1;
 static int filter_msg_type = -1;  /* -1 means no filter */
 static int show_generic_netlink = 0;
@@ -292,7 +293,7 @@ static int create_nlmon_device(const char *dev_name)
 	warnx("  sudo modprobe nlmon");
 	warnx("  sudo ip link add %s type nlmon", dev_name);
 	warnx("  sudo ip link set %s up", dev_name);
-	warnx("");
+	fprintf(stderr, "\n");  /* Empty line without format warning */
 	warnx("Or use netlink monitoring without -m option:");
 	warnx("  sudo ./nlmon -g -V -A");
 	return -1;
@@ -418,6 +419,29 @@ static void netlink_manager_event_cb(struct nlmon_event *evt, void *user_data)
 	if (!evt)
 		return;
 	
+	/* Debug: Show raw netlink message details */
+	if (debug_netlink) {
+		snprintf(buf, sizeof(buf), 
+		         "[DEBUG] Netlink msg: proto=%d type=%u flags=0x%x seq=%u pid=%u",
+		         evt->netlink.protocol,
+		         evt->netlink.msg_type,
+		         evt->netlink.msg_flags,
+		         evt->netlink.seq,
+		         evt->netlink.pid);
+		log_event(buf);
+		
+		/* Show generic netlink details if applicable */
+		if (evt->netlink.protocol == NETLINK_GENERIC) {
+			snprintf(buf, sizeof(buf),
+			         "[DEBUG] GenL: family=%s(%u) cmd=%u ver=%u",
+			         evt->netlink.genl_family_name,
+			         evt->netlink.genl_family_id,
+			         evt->netlink.genl_cmd,
+			         evt->netlink.genl_version);
+			log_event(buf);
+		}
+	}
+	
 	/* Handle netlink events from the new manager */
 	switch (evt->netlink.protocol) {
 	case NETLINK_ROUTE:
@@ -425,11 +449,26 @@ static void netlink_manager_event_cb(struct nlmon_event *evt, void *user_data)
 		case RTM_NEWLINK:
 		case RTM_DELLINK:
 			if (evt->netlink.data.link) {
-				snprintf(buf, sizeof(buf), "ROUTE: %s interface %s (idx=%d, flags=0x%x)",
+				char flags_str[128] = "";
+				unsigned int flags = evt->netlink.data.link->flags;
+				
+				/* Decode common flags */
+				if (flags & 0x1) strcat(flags_str, "UP ");
+				if (flags & 0x40) strcat(flags_str, "RUNNING ");
+				if (flags & 0x2) strcat(flags_str, "BROADCAST ");
+				if (flags & 0x8) strcat(flags_str, "LOOPBACK ");
+				if (flags & 0x1000) strcat(flags_str, "LOWER_UP ");
+				
+				snprintf(buf, sizeof(buf), 
+				         "ROUTE: %s interface %s idx=%d mtu=%u flags=[%s] mac=%02x:%02x:%02x:%02x:%02x:%02x",
 				         evt->netlink.msg_type == RTM_NEWLINK ? "NEW" : "DEL",
 				         evt->netlink.data.link->ifname,
 				         evt->netlink.data.link->ifindex,
-				         evt->netlink.data.link->flags);
+				         evt->netlink.data.link->mtu,
+				         flags_str[0] ? flags_str : "NONE",
+				         evt->netlink.data.link->addr[0], evt->netlink.data.link->addr[1],
+				         evt->netlink.data.link->addr[2], evt->netlink.data.link->addr[3],
+				         evt->netlink.data.link->addr[4], evt->netlink.data.link->addr[5]);
 				event_stats.generic_events++;
 				log_event(buf);
 			}
@@ -437,11 +476,20 @@ static void netlink_manager_event_cb(struct nlmon_event *evt, void *user_data)
 		case RTM_NEWADDR:
 		case RTM_DELADDR:
 			if (evt->netlink.data.addr) {
-				snprintf(buf, sizeof(buf), "ROUTE: %s address %s/%d on %s",
+				const char *family = evt->netlink.data.addr->family == 2 ? "IPv4" : 
+				                     evt->netlink.data.addr->family == 10 ? "IPv6" : "Unknown";
+				const char *scope = evt->netlink.data.addr->scope == 0 ? "global" :
+				                    evt->netlink.data.addr->scope == 200 ? "site" :
+				                    evt->netlink.data.addr->scope == 253 ? "link" :
+				                    evt->netlink.data.addr->scope == 254 ? "host" : "unknown";
+				
+				snprintf(buf, sizeof(buf), "ROUTE: %s address %s %s/%d scope=%s if=%s",
 				         evt->netlink.msg_type == RTM_NEWADDR ? "NEW" : "DEL",
+				         family,
 				         evt->netlink.data.addr->addr,
 				         evt->netlink.data.addr->prefixlen,
-				         evt->netlink.data.addr->label);
+				         scope,
+				         evt->netlink.data.addr->label[0] ? evt->netlink.data.addr->label : "?");
 				event_stats.generic_events++;
 				log_event(buf);
 			}
@@ -449,10 +497,17 @@ static void netlink_manager_event_cb(struct nlmon_event *evt, void *user_data)
 		case RTM_NEWROUTE:
 		case RTM_DELROUTE:
 			if (evt->netlink.data.route) {
-				snprintf(buf, sizeof(buf), "ROUTE: %s route dst=%s gw=%s",
+				const char *family = evt->netlink.data.route->family == 2 ? "IPv4" : 
+				                     evt->netlink.data.route->family == 10 ? "IPv6" : "?";
+				
+				snprintf(buf, sizeof(buf), "ROUTE: %s route %s dst=%s/%d via=%s oif=%d prio=%u",
 				         evt->netlink.msg_type == RTM_NEWROUTE ? "NEW" : "DEL",
-				         evt->netlink.data.route->dst,
-				         evt->netlink.data.route->gateway);
+				         family,
+				         evt->netlink.data.route->dst[0] ? evt->netlink.data.route->dst : "default",
+				         evt->netlink.data.route->dst_len,
+				         evt->netlink.data.route->gateway[0] ? evt->netlink.data.route->gateway : "direct",
+				         evt->netlink.data.route->oif,
+				         evt->netlink.data.route->priority);
 				event_stats.generic_events++;
 				log_event(buf);
 			}
@@ -460,10 +515,26 @@ static void netlink_manager_event_cb(struct nlmon_event *evt, void *user_data)
 		case RTM_NEWNEIGH:
 		case RTM_DELNEIGH:
 			if (evt->netlink.data.neigh) {
-				snprintf(buf, sizeof(buf), "ROUTE: %s neighbor %s state=0x%x",
+				char state_str[64] = "";
+				uint16_t state = evt->netlink.data.neigh->state;
+				
+				/* Decode neighbor states */
+				if (state & 0x01) strcat(state_str, "INCOMPLETE ");
+				if (state & 0x02) strcat(state_str, "REACHABLE ");
+				if (state & 0x04) strcat(state_str, "STALE ");
+				if (state & 0x08) strcat(state_str, "DELAY ");
+				if (state & 0x10) strcat(state_str, "PROBE ");
+				if (state & 0x20) strcat(state_str, "FAILED ");
+				if (state & 0x40) strcat(state_str, "NOARP ");
+				if (state & 0x80) strcat(state_str, "PERMANENT ");
+				
+				snprintf(buf, sizeof(buf), "ROUTE: %s neighbor %s lladdr=%02x:%02x:%02x:%02x:%02x:%02x state=[%s]",
 				         evt->netlink.msg_type == RTM_NEWNEIGH ? "NEW" : "DEL",
 				         evt->netlink.data.neigh->dst,
-				         evt->netlink.data.neigh->state);
+				         evt->netlink.data.neigh->lladdr[0], evt->netlink.data.neigh->lladdr[1],
+				         evt->netlink.data.neigh->lladdr[2], evt->netlink.data.neigh->lladdr[3],
+				         evt->netlink.data.neigh->lladdr[4], evt->netlink.data.neigh->lladdr[5],
+				         state_str[0] ? state_str : "NONE");
 				event_stats.generic_events++;
 				log_event(buf);
 			}
@@ -472,18 +543,44 @@ static void netlink_manager_event_cb(struct nlmon_event *evt, void *user_data)
 		break;
 		
 	case NETLINK_GENERIC:
-		if (strcmp(evt->netlink.genl_family_name, "nl80211") == 0) {
-			snprintf(buf, sizeof(buf), "NL80211: cmd=%d interface=%s freq=%u",
-			         evt->netlink.genl_cmd,
-			         evt->netlink.data.nl80211 ? evt->netlink.data.nl80211->ifname : "unknown",
-			         evt->netlink.data.nl80211 ? evt->netlink.data.nl80211->freq : 0);
+		if (strcmp(evt->netlink.genl_family_name, "nl80211") == 0 && evt->netlink.data.nl80211) {
+			/* Decode nl80211 command names */
+			const char *cmd_name = "UNKNOWN";
+			switch (evt->netlink.genl_cmd) {
+			case 1: cmd_name = "GET_WIPHY"; break;
+			case 3: cmd_name = "SET_WIPHY"; break;
+			case 5: cmd_name = "GET_INTERFACE"; break;
+			case 7: cmd_name = "SET_INTERFACE"; break;
+			case 9: cmd_name = "NEW_INTERFACE"; break;
+			case 11: cmd_name = "DEL_INTERFACE"; break;
+			case 19: cmd_name = "NEW_STATION"; break;
+			case 20: cmd_name = "DEL_STATION"; break;
+			case 33: cmd_name = "TRIGGER_SCAN"; break;
+			case 34: cmd_name = "NEW_SCAN_RESULTS"; break;
+			case 38: cmd_name = "CONNECT"; break;
+			case 39: cmd_name = "ROAM"; break;
+			case 40: cmd_name = "DISCONNECT"; break;
+			case 46: cmd_name = "AUTHENTICATE"; break;
+			case 47: cmd_name = "ASSOCIATE"; break;
+			case 48: cmd_name = "DEAUTHENTICATE"; break;
+			case 49: cmd_name = "DISASSOCIATE"; break;
+			}
+			
+			snprintf(buf, sizeof(buf), 
+			         "NL80211: %s if=%s wiphy=%d freq=%u MHz iftype=%u",
+			         cmd_name,
+			         evt->netlink.data.nl80211->ifname[0] ? evt->netlink.data.nl80211->ifname : "?",
+			         evt->netlink.data.nl80211->wiphy,
+			         evt->netlink.data.nl80211->freq,
+			         evt->netlink.data.nl80211->iftype);
 			event_stats.generic_events++;
 			log_event(buf);
 		} else {
-			snprintf(buf, sizeof(buf), "GENL: family=%s cmd=%d version=%d",
+			snprintf(buf, sizeof(buf), "GENL: family=%s cmd=%d version=%d family_id=%u",
 			         evt->netlink.genl_family_name,
 			         evt->netlink.genl_cmd,
-			         evt->netlink.genl_version);
+			         evt->netlink.genl_version,
+			         evt->netlink.genl_family_id);
 			event_stats.generic_events++;
 			log_event(buf);
 		}
@@ -1135,7 +1232,7 @@ static int init(struct context *ctx)
 
 static int usage(int rc)
 {
-	printf("Usage: nlmon [-h?vciau] [-m device] [-p file] [-V] [-f type] [-g] [-w source] [-W expr]\n"
+	printf("Usage: nlmon [-h?vciauVD] [-m device] [-p file] [-f type] [-g] [-A] [-w source] [-W expr]\n"
 	       "\n"
 	       "Options:\n"
 	       "  -h    This help text\n"
@@ -1147,9 +1244,10 @@ static int usage(int rc)
 	       "  -m    Bind to nlmon device (e.g., -m nlmon0) for raw packet capture\n"
 	       "  -p    Write captured netlink packets to PCAP file (requires -m)\n"
 	       "  -V    Verbose mode - show detailed netlink message information\n"
+	       "  -D    Debug mode - show raw netlink message details and libnl debugging\n"
 	       "  -f    Filter by netlink message type (e.g., -f 16 for RTM_NEWLINK)\n"
-	       "  -g    Enable NETLINK_GENERIC protocol monitoring\n"
-	       "  -A    Monitor all netlink protocols (not just NETLINK_ROUTE)\n"
+	       "  -g    Enable NETLINK_GENERIC protocol monitoring (nl80211, etc.)\n"
+	       "  -A    Monitor all netlink protocols (ROUTE, GENERIC, SOCK_DIAG, NETFILTER)\n"
 	       "  -w    Enable WMI log monitoring from <source> (file path, '-' for stdin, or 'follow:path')\n"
 	       "  -W    Filter WMI events with expression (e.g., 'wmi.cmd=REQUEST_STATS')\n"
 	       "\n"
@@ -1224,7 +1322,7 @@ int main(int argc, char *argv[])
 		warnx("Failed to initialize signal handler");
 	}
 
-	while ((c = getopt(argc, argv, "h?vciauVm:p:f:gAw:W:")) != EOF) {
+	while ((c = getopt(argc, argv, "h?vciauVDm:p:f:gAw:W:")) != EOF) {
 		switch (c) {
 		case 'h':
 		case '?':
@@ -1252,6 +1350,11 @@ int main(int argc, char *argv[])
 			
 		case 'V':
 			verbose_mode = 1;
+			break;
+			
+		case 'D':
+			debug_netlink = 1;
+			verbose_mode = 1;  /* Debug implies verbose */
 			break;
 			
 		case 'm':
