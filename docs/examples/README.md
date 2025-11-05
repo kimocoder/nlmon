@@ -4,7 +4,9 @@ This directory contains example configuration files for various nlmon use cases.
 
 ## Available Examples
 
-### 1. basic-config.yaml
+### Configuration Files
+
+#### 1. basic-config.yaml
 **Use Case:** Getting started with nlmon
 
 A minimal configuration suitable for learning nlmon basics. This configuration:
@@ -18,7 +20,7 @@ A minimal configuration suitable for learning nlmon basics. This configuration:
 nlmon -c docs/examples/basic-config.yaml
 ```
 
-### 2. advanced-config.yaml
+#### 2. advanced-config.yaml
 **Use Case:** Production environment with full features
 
 A comprehensive configuration demonstrating all nlmon capabilities:
@@ -40,7 +42,7 @@ nlmon -c docs/examples/advanced-config.yaml
 - Kubernetes/Docker access (if using integrations)
 - Webhook URLs configured in environment variables
 
-### 3. container-monitoring.yaml
+#### 3. container-monitoring.yaml
 **Use Case:** Docker and Kubernetes container networking
 
 Optimized for monitoring container networking events:
@@ -60,7 +62,7 @@ nlmon -c docs/examples/container-monitoring.yaml
 - Kubernetes config: `~/.kube/config`
 - Appropriate permissions for container APIs
 
-### 4. security-monitoring.yaml
+#### 4. security-monitoring.yaml
 **Use Case:** Security event detection and forensics
 
 Focused on detecting and logging security-relevant events:
@@ -83,7 +85,7 @@ nlmon -c docs/examples/security-monitoring.yaml
 - SNMP trap receiver (optional)
 - Security webhook endpoints
 
-### 5. production-server.yaml
+#### 5. production-server.yaml
 **Use Case:** High-performance production servers
 
 Optimized for production environments:
@@ -109,6 +111,86 @@ sudo systemctl start nlmon
 - Prometheus monitoring
 - Centralized logging infrastructure
 - Production TLS certificates
+
+### Example Scripts
+
+#### 6. wmi-monitoring.sh
+**Use Case:** Qualcomm WMI command monitoring
+
+Interactive script demonstrating various WMI monitoring scenarios:
+- Basic WMI monitoring from kernel logs
+- Real-time monitoring with follow mode
+- Combined netlink and WMI monitoring
+- Filtered monitoring for specific commands
+- Statistics request monitoring
+- JSON export for analysis
+- Pattern analysis and reporting
+
+**Usage:**
+```bash
+# Show available options
+./docs/examples/wmi-monitoring.sh help
+
+# Basic monitoring
+./docs/examples/wmi-monitoring.sh basic
+
+# Real-time follow mode
+./docs/examples/wmi-monitoring.sh follow
+
+# Analyze WMI patterns
+./docs/examples/wmi-monitoring.sh analyze
+
+# Run all examples interactively
+./docs/examples/wmi-monitoring.sh all
+```
+
+**Prerequisites:**
+- Qualcomm WiFi chipset (ath10k, ath11k, ath12k)
+- WMI commands in kernel logs
+- Root privileges for log access
+
+#### 7. wmi-stats-analysis.sh
+**Use Case:** WMI statistics analysis and reporting
+
+Comprehensive analysis tool for WMI command patterns:
+- Capture WMI events for specified duration
+- Analyze command frequency and distribution
+- Statistics type analysis
+- VDEV distribution analysis
+- Temporal pattern detection
+- Peer MAC address tracking
+- Generate reports in text, HTML, or CSV format
+
+**Usage:**
+```bash
+# Capture and analyze for 60 seconds
+./docs/examples/wmi-stats-analysis.sh
+
+# Capture for 5 minutes
+./docs/examples/wmi-stats-analysis.sh --capture 300
+
+# Analyze existing capture
+./docs/examples/wmi-stats-analysis.sh --input /tmp/wmi_events.json
+
+# Generate HTML report
+./docs/examples/wmi-stats-analysis.sh --format html --output /var/www/html/wmi_report
+
+# Generate CSV for spreadsheet analysis
+./docs/examples/wmi-stats-analysis.sh --format csv
+```
+
+**Prerequisites:**
+- Qualcomm WiFi chipset
+- jq (for advanced analysis features)
+- Root privileges
+
+**Output:**
+- Command frequency statistics
+- Statistics type distribution
+- VDEV usage patterns
+- Temporal analysis
+- Peer MAC address tracking
+- Reports in multiple formats
 
 ## Configuration Tips
 
@@ -276,11 +358,59 @@ core:
   log_level: debug
 ```
 
+## WMI Monitoring Quick Start
+
+For Qualcomm WiFi chipset users, here's a quick guide to get started with WMI monitoring:
+
+### 1. Verify WMI Logs
+
+Check if your system has WMI commands in logs:
+```bash
+dmesg | grep -i "wmi\|STATS REQ\|RCPI REQ"
+journalctl -k | grep -i "wmi\|STATS REQ"
+```
+
+### 2. Enable Driver Debug Logging (if needed)
+
+For ath10k:
+```bash
+echo 0xffffffff > /sys/module/ath10k_core/parameters/debug_mask
+```
+
+For ath11k:
+```bash
+echo 0xffffffff > /sys/module/ath11k/parameters/debug_mask
+```
+
+### 3. Start Monitoring
+
+```bash
+# Basic monitoring
+sudo ./nlmon --wmi /var/log/kern.log
+
+# Real-time monitoring
+sudo ./nlmon --wmi follow:/var/log/kern.log
+
+# With netlink events
+sudo ./nlmon -g --wmi /var/log/kern.log
+```
+
+### 4. Analyze Patterns
+
+```bash
+# Run analysis script
+./docs/examples/wmi-stats-analysis.sh --capture 120
+```
+
+For detailed WMI monitoring documentation, see [docs/WMI_MONITORING.md](../WMI_MONITORING.md).
+
 ## Additional Resources
 
 - Main documentation: `man nlmon`
 - Configuration reference: `man nlmon.conf`
 - Plugin development: `man nlmon-plugins`
+- WMI monitoring guide: [docs/WMI_MONITORING.md](../WMI_MONITORING.md)
+- QCA vendor support: [docs/QCA_VENDOR_SUPPORT.md](../QCA_VENDOR_SUPPORT.md)
 - Online wiki: https://github.com/yourusername/nlmon/wiki
 - Example plugins: `src/plugins/examples/`
 

@@ -79,6 +79,20 @@ Run as daemon in background
 .TP
 .BR \-\-pid\-file =\fIFILE\fR
 Write process ID to FILE when running as daemon
+.TP
+.BR \-\-wmi =\fISOURCE\fR
+Enable WMI (Wireless Management Interface) monitoring from SOURCE. SOURCE can be:
+.RS
+.IP \(bu 2
+File path (e.g., /var/log/kern.log)
+.IP \(bu 2
+"-" for stdin
+.IP \(bu 2
+"follow:/path" for real-time following (like tail -f)
+.RE
+.TP
+.BR \-\-wmi\-filter =\fIEXPR\fR
+Filter WMI commands using expression (e.g., "wmi.cmd=REQUEST_LINK_STATS")
 .SH INTERACTIVE COMMANDS
 When running in CLI mode, the following key bindings are available:
 .TP
@@ -133,6 +147,7 @@ nlmon supports a powerful filter expression language for event filtering:
 interface == "eth0"
 message_type == RTM_NEWLINK
 namespace == "default"
+protocol == "WMI"
 .fi
 .SS Pattern Matching
 .nf
@@ -148,6 +163,18 @@ NOT (interface == "lo")
 .SS Complex Expressions
 .nf
 (interface =~ "veth.*" AND message_type IN [16, 17]) OR priority == "high"
+.fi
+.SS WMI Filter Keys
+For WMI monitoring, the following filter keys are available:
+.nf
+protocol == "WMI"
+wmi.cmd == "REQUEST_LINK_STATS"
+wmi.cmd_id == 90116
+wmi.vdev == 0
+wmi.pdev == 0
+wmi.stats == "LINK_LAYER_STATS_TYPE"
+wmi.stats_id == 7
+wmi.peer == "aa:bb:cc:dd:ee:ff"
 .fi
 .SH CONFIGURATION
 nlmon reads configuration from YAML files in the following order:
@@ -245,6 +272,46 @@ Use custom configuration:
 nlmon \-c /etc/nlmon/production.yaml
 .RE
 .fi
+.SS WMI Monitoring
+Monitor Qualcomm WMI commands from device logs:
+.PP
+.nf
+.RS
+nlmon \-\-wmi /var/log/kern.log
+.RE
+.fi
+.PP
+Monitor WMI commands in real-time (follow mode):
+.PP
+.nf
+.RS
+nlmon \-\-wmi follow:/var/log/kern.log
+.RE
+.fi
+.PP
+Combine WMI monitoring with netlink monitoring:
+.PP
+.nf
+.RS
+nlmon \-g \-\-wmi /var/log/kern.log
+.RE
+.fi
+.PP
+Filter specific WMI commands:
+.PP
+.nf
+.RS
+nlmon \-\-wmi /var/log/kern.log \-\-filter "protocol=WMI && wmi.cmd=REQUEST_LINK_STATS"
+.RE
+.fi
+.PP
+Monitor WMI commands from stdin:
+.PP
+.nf
+.RS
+cat device.log | nlmon \-\-wmi \-
+.RE
+.fi
 .SH FILES
 .TP
 .I /etc/nlmon/nlmon.yaml
@@ -321,6 +388,10 @@ Report bugs to: https://github.com/yourusername/nlmon/issues
 .BR rtnetlink (7)
 .PP
 Full documentation: https://github.com/yourusername/nlmon/wiki
+.PP
+WMI monitoring guide: docs/WMI_MONITORING.md
+.PP
+QCA vendor support: docs/QCA_VENDOR_SUPPORT.md
 .SH AUTHOR
 Written by the nlmon development team.
 .SH COPYRIGHT
