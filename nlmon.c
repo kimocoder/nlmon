@@ -70,6 +70,11 @@
 #include "resource_tracker.h"
 #include "signal_handler.h"
 #include "netlink_multi_protocol.h"
+#include "nlmon_netlink.h"
+#include "nlmon_nl_route.h"
+#include "nlmon_nl_genl.h"
+#include "nlmon_nl_diag.h"
+#include "nlmon_nl_netfilter.h"
 
 /* Forward declarations for nlmon netlink manager (avoid header conflicts) */
 struct nlmon_nl_manager;
@@ -208,20 +213,88 @@ static void log_event(const char *msg)
 }
 
 /* nlmon device management */
+
+/**
+ * Check if an interface exists and get its type
+ * Returns: 0 if exists, -1 if not
+ * Sets is_nlmon to 1 if it's an nlmon device, 0 otherwise
+ */
+static int check_interface_type(const char *dev_name, int *is_nlmon)
+{
+	struct ifreq ifr;
+	int sock;
+	char path[256];
+	char type[64];
+	FILE *fp;
+	
+	*is_nlmon = 0;
+	
+	/* First check if interface exists using ioctl */
+	sock = socket(AF_INET, SOCK_DGRAM, 0);
+	if (sock < 0)
+		return -1;
+	
+	memset(&ifr, 0, sizeof(ifr));
+	strncpy(ifr.ifr_name, dev_name, IFNAMSIZ - 1);
+	ifr.ifr_name[IFNAMSIZ - 1] = '\0';
+	
+	if (ioctl(sock, SIOCGIFINDEX, &ifr) < 0) {
+		close(sock);
+		return -1;  /* Interface doesn't exist */
+	}
+	close(sock);
+	
+	/* Check if it's an nlmon device by reading /sys/class/net/<dev>/type */
+	snprintf(path, sizeof(path), "/sys/class/net/%s/type", dev_name);
+	fp = fopen(path, "r");
+	if (fp) {
+		if (fgets(type, sizeof(type), fp)) {
+			/* ARPHRD_NETLINK = 824 */
+			if (atoi(type) == 824)
+				*is_nlmon = 1;
+		}
+		fclose(fp);
+	}
+	
+	return 0;  /* Interface exists */
+}
+
 static int create_nlmon_device(const char *dev_name)
 {
-	/* TODO: Reimplement using raw netlink or system libnl3 in separate compilation unit
-	 * to avoid header conflicts with libnl-tiny. For now, nlmon device creation is disabled.
-	 * Users should manually create the nlmon device using:
-	 *   sudo modprobe nlmon
-	 *   sudo ip link add nlmon0 type nlmon
-	 *   sudo ip link set nlmon0 up
-	 */
-	warnx("Automatic nlmon device creation is temporarily disabled.");
-	warnx("Please manually create the nlmon device:");
+	int is_nlmon = 0;
+	
+	/* Check if interface already exists */
+	if (check_interface_type(dev_name, &is_nlmon) == 0) {
+		if (is_nlmon) {
+			if (verbose_mode) {
+				char msg[256];
+				snprintf(msg, sizeof(msg), "Using existing nlmon device: %s", dev_name);
+				log_event(msg);
+			}
+			return 0;  /* Already exists as nlmon device */
+		} else {
+			/* It's a regular interface (like wlan0, wlp4s0) */
+			if (verbose_mode) {
+				char msg[256];
+				snprintf(msg, sizeof(msg), 
+				         "Interface %s exists but is not an nlmon device", dev_name);
+				log_event(msg);
+				log_event("Note: Netlink monitoring will capture events from all interfaces");
+				log_event("The -m option is optional for netlink monitoring");
+			}
+			return -1;  /* Not an nlmon device */
+		}
+	}
+	
+	/* Interface doesn't exist - provide instructions */
+	warnx("Interface '%s' not found", dev_name);
+	warnx("To create an nlmon monitor interface:");
 	warnx("  sudo modprobe nlmon");
 	warnx("  sudo ip link add %s type nlmon", dev_name);
 	warnx("  sudo ip link set %s up", dev_name);
+	warnx("");
+	warnx("Or use netlink monitoring without -m option:");
+	warnx("  sudo ./nlmon -g -V -A");
 	return -1;
 }
 
@@ -335,7 +408,119 @@ static void write_pcap_packet(const unsigned char *data, size_t len)
 	fflush(pcap_fp);
 }
 
-/* Generic netlink event callback */
+/* Netlink manager event callback */
+static void netlink_manager_event_cb(struct nlmon_event *evt, void *user_data)
+{
+	char buf[512];
+	
+	(void)user_data;
+	
+	if (!evt)
+		return;
+	
+	/* Handle netlink events from the new manager */
+	switch (evt->netlink.protocol) {
+	case NETLINK_ROUTE:
+		switch (evt->netlink.msg_type) {
+		case RTM_NEWLINK:
+		case RTM_DELLINK:
+			if (evt->netlink.data.link) {
+				snprintf(buf, sizeof(buf), "ROUTE: %s interface %s (idx=%d, flags=0x%x)",
+				         evt->netlink.msg_type == RTM_NEWLINK ? "NEW" : "DEL",
+				         evt->netlink.data.link->ifname,
+				         evt->netlink.data.link->ifindex,
+				         evt->netlink.data.link->flags);
+				event_stats.generic_events++;
+				log_event(buf);
+			}
+			break;
+		case RTM_NEWADDR:
+		case RTM_DELADDR:
+			if (evt->netlink.data.addr) {
+				snprintf(buf, sizeof(buf), "ROUTE: %s address %s/%d on %s",
+				         evt->netlink.msg_type == RTM_NEWADDR ? "NEW" : "DEL",
+				         evt->netlink.data.addr->addr,
+				         evt->netlink.data.addr->prefixlen,
+				         evt->netlink.data.addr->label);
+				event_stats.generic_events++;
+				log_event(buf);
+			}
+			break;
+		case RTM_NEWROUTE:
+		case RTM_DELROUTE:
+			if (evt->netlink.data.route) {
+				snprintf(buf, sizeof(buf), "ROUTE: %s route dst=%s gw=%s",
+				         evt->netlink.msg_type == RTM_NEWROUTE ? "NEW" : "DEL",
+				         evt->netlink.data.route->dst,
+				         evt->netlink.data.route->gateway);
+				event_stats.generic_events++;
+				log_event(buf);
+			}
+			break;
+		case RTM_NEWNEIGH:
+		case RTM_DELNEIGH:
+			if (evt->netlink.data.neigh) {
+				snprintf(buf, sizeof(buf), "ROUTE: %s neighbor %s state=0x%x",
+				         evt->netlink.msg_type == RTM_NEWNEIGH ? "NEW" : "DEL",
+				         evt->netlink.data.neigh->dst,
+				         evt->netlink.data.neigh->state);
+				event_stats.generic_events++;
+				log_event(buf);
+			}
+			break;
+		}
+		break;
+		
+	case NETLINK_GENERIC:
+		if (strcmp(evt->netlink.genl_family_name, "nl80211") == 0) {
+			snprintf(buf, sizeof(buf), "NL80211: cmd=%d interface=%s freq=%u",
+			         evt->netlink.genl_cmd,
+			         evt->netlink.data.nl80211 ? evt->netlink.data.nl80211->ifname : "unknown",
+			         evt->netlink.data.nl80211 ? evt->netlink.data.nl80211->freq : 0);
+			event_stats.generic_events++;
+			log_event(buf);
+		} else {
+			snprintf(buf, sizeof(buf), "GENL: family=%s cmd=%d version=%d",
+			         evt->netlink.genl_family_name,
+			         evt->netlink.genl_cmd,
+			         evt->netlink.genl_version);
+			event_stats.generic_events++;
+			log_event(buf);
+		}
+		break;
+		
+	case NETLINK_SOCK_DIAG:
+		if (evt->netlink.data.diag) {
+			snprintf(buf, sizeof(buf), "SOCK_DIAG: %s:%u -> %s:%u state=%u proto=%u",
+			         evt->netlink.data.diag->src_addr,
+			         evt->netlink.data.diag->src_port,
+			         evt->netlink.data.diag->dst_addr,
+			         evt->netlink.data.diag->dst_port,
+			         evt->netlink.data.diag->state,
+			         evt->netlink.data.diag->protocol);
+			event_stats.sock_diag_events++;
+			log_event(buf);
+		}
+		break;
+		
+	case NETLINK_NETFILTER:
+		if (evt->netlink.data.conntrack) {
+			snprintf(buf, sizeof(buf), "NETFILTER: %s:%u -> %s:%u proto=%u state=%u bytes=%lu",
+			         evt->netlink.data.conntrack->src_addr,
+			         evt->netlink.data.conntrack->src_port,
+			         evt->netlink.data.conntrack->dst_addr,
+			         evt->netlink.data.conntrack->dst_port,
+			         evt->netlink.data.conntrack->protocol,
+			         evt->netlink.data.conntrack->tcp_state,
+			         evt->netlink.data.conntrack->bytes_orig);
+			event_stats.generic_events++;
+			log_event(buf);
+		}
+		break;
+	}
+}
+
+/* Generic netlink event callback (legacy) */
 static void genetlink_event_cb(nlmon_event_type_t type, void *data, void *user_data)
 {
 	char buf[256];
@@ -1141,17 +1326,39 @@ int main(int argc, char *argv[])
 	
 	/* Setup nlmon if requested */
 	if (use_nlmon) {
+		int is_nlmon = 0;
+		
 		if (!nlmon_device)
 			nlmon_device = "nlmon0";
 		
-		if (create_nlmon_device(nlmon_device) < 0) {
-			warnx("Failed to setup nlmon device, continuing without it");
-			use_nlmon = 0;
-		} else {
+		/* Check if the specified interface exists and is an nlmon device */
+		if (check_interface_type(nlmon_device, &is_nlmon) == 0 && is_nlmon) {
+			/* It's an nlmon device, bind to it */
 			nlmon_sock = bind_nlmon_socket(nlmon_device);
 			if (nlmon_sock < 0) {
-				warnx("Failed to bind to nlmon device, continuing without it");
+				warnx("Failed to bind to nlmon device %s", nlmon_device);
 				use_nlmon = 0;
+			} else if (verbose_mode) {
+				char msg[256];
+				snprintf(msg, sizeof(msg), "Monitoring nlmon device: %s", nlmon_device);
+				log_event(msg);
+			}
+		} else {
+			/* Try to create it or handle non-nlmon interface */
+			if (create_nlmon_device(nlmon_device) < 0) {
+				if (verbose_mode) {
+					char msg[256];
+					snprintf(msg, sizeof(msg), 
+					         "Continuing with netlink monitoring (no nlmon device)");
+					log_event(msg);
+				}
+				use_nlmon = 0;
+			} else {
+				nlmon_sock = bind_nlmon_socket(nlmon_device);
+				if (nlmon_sock < 0) {
+					warnx("Failed to bind to nlmon device, continuing without it");
+					use_nlmon = 0;
+				}
 			}
 		}
 		
@@ -1250,6 +1457,9 @@ int main(int argc, char *argv[])
 		warnx("Failed to initialize netlink manager");
 		return 1;
 	}
+
+	/* Set event callback for netlink manager */
+	nlmon_nl_set_callback(g_nl_manager, netlink_manager_event_cb, NULL);
 
 	/* Enable NETLINK_ROUTE protocol (always enabled) */
 	err = nlmon_nl_enable_route(g_nl_manager);
@@ -1350,8 +1560,17 @@ int main(int argc, char *argv[])
 	}
 
 	/* Initialize netlink manager watchers for additional protocols */
-	ev_io nl_genl_io, nl_diag_io, nl_nf_io;
+	ev_io nl_route_io, nl_genl_io, nl_diag_io, nl_nf_io;
 	if (g_nl_manager) {
+		/* Add NETLINK_ROUTE watcher (always enabled) */
+		int route_fd = nlmon_nl_get_route_fd(g_nl_manager);
+		if (route_fd >= 0) {
+			ev_io_init(&nl_route_io, nlroute_cb, route_fd, EV_READ);
+			ev_io_start(loop, &nl_route_io);
+			if (verbose_mode)
+				log_event("Added NETLINK_ROUTE to event loop");
+		}
+		
 		/* Add NETLINK_GENERIC watcher if enabled */
 		int genl_fd = nlmon_nl_get_genl_fd(g_nl_manager);
 		if (genl_fd >= 0) {
