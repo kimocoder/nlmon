@@ -12,6 +12,10 @@
 #ifndef NETLINK_HANDLERS_H_
 #define NETLINK_HANDLERS_H_
 
+#ifndef _GNU_SOURCE
+#define _GNU_SOURCE
+#endif
+
 #include <stdio.h>
 #include <stdint.h>
 #include <sys/socket.h>

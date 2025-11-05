@@ -12,6 +12,10 @@
 #ifndef NETLINK_NETLINK_H_
 #define NETLINK_NETLINK_H_
 
+#ifndef _GNU_SOURCE
+#define _GNU_SOURCE
+#endif
+
 #include <stdio.h>
 #include <stdint.h>
 #include <string.h>

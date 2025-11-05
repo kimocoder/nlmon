@@ -12,6 +12,7 @@
 #ifndef NETLINK_MSG_H_
 #define NETLINK_MSG_H_
 
+#include <sys/socket.h>
 #include <netlink/netlink.h>
 #include <netlink/object.h>
 
@@ -58,7 +59,6 @@ struct nl_msg
 
 struct nl_msg;
 struct nl_tree;
-struct ucred;
 
 /* message parsing */
 extern int		  nlmsg_ok(const struct nlmsghdr *, int);

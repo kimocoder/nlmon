@@ -22741,4 +22741,20 @@ enum qca_wlan_vendor_attr_beacon_miss_stat {
 	QCA_WLAN_VENDOR_ATTR_BEACON_MISS_STAT_AFTER_LAST - 1,
 };
 
+/* Function declarations */
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+/**
+ * Convert QCA vendor subcommand to string
+ * @param subcmd QCA vendor subcommand ID
+ * @return String representation of subcommand, or NULL if unknown
+ */
+const char *qca_vendor_subcmd_to_string(unsigned int subcmd);
+
+#ifdef __cplusplus
+}
+#endif
+
 #endif /* QCA_VENDOR_H */

@@ -65,6 +65,7 @@
 #include "resource_tracker.h"
 #include "signal_handler.h"
 #include "netlink_multi_protocol.h"
+#include "nlmon_netlink.h"
 
 /* WMI monitoring support */
 #include "wmi_log_reader.h"
@@ -100,8 +101,10 @@ static struct memory_tracker *g_memory_tracker = NULL;
 static struct resource_tracker *g_resource_tracker = NULL;
 static struct signal_handler *g_signal_handler = NULL;
 static struct nlmon_multi_protocol_ctx *g_multi_proto_ctx = NULL;
+static struct nlmon_nl_manager *g_nl_manager = NULL;
 
 struct context {
+	/* Legacy fields - kept for compatibility but may be unused */
 	struct nl_sock        *ns;
 	struct nl_cache_mngr  *mngr;
 	struct nl_cache       *lcache;
@@ -791,39 +794,17 @@ static void link_change_cb(struct nl_cache *lcache,
 
 static void nlroute_cb(struct ev_loop *loop, ev_io *w, int revents)
 {
-	struct context *ctx = ev_userdata(loop);
+	(void)loop;
+	(void)w;
+	(void)revents;
 
-	assert(ctx);
-	assert(ctx->mngr);
-//	warnx("We got signal");
-
-	nl_cache_mngr_data_ready(ctx->mngr);
+	/* Process NETLINK_ROUTE messages using new manager */
+	if (g_nl_manager) {
+		nlmon_nl_process_route(g_nl_manager);
+	}
 }
 
-static void reconf_link_iter(struct nl_object *obj, void *arg)
-{
-	link_change_cb(NULL, obj, NL_ACT_NEW, NULL);
-}
-
-static void reconf_route_iter(struct nl_object *obj, void *arg)
-{
-	route_change_cb(NULL, obj, NL_ACT_NEW, NULL);
-}
-
-static void reconf_addr_iter(struct nl_object *obj, void *arg)
-{
-	addr_change_cb(NULL, obj, NL_ACT_NEW, NULL);
-}
-
-static void reconf_neigh_iter(struct nl_object *obj, void *arg)
-{
-	neigh_change_cb(NULL, obj, NL_ACT_NEW, NULL);
-}
-
-static void reconf_rule_iter(struct nl_object *obj, void *arg)
-{
-	rule_change_cb(NULL, obj, NL_ACT_NEW, NULL);
-}
+/* Removed old cache-based reconf iterator functions - no longer needed with new netlink manager */
 
 static void refresh_cli_display(void)
 {
@@ -1085,27 +1066,16 @@ static void cli_update_cb(struct ev_loop *loop, ev_timer *w, int revents)
 /* reconf */
 static void sighub_cb(struct ev_loop *loop, ev_signal *w, int revents)
 {
-	struct context *ctx = ev_userdata(loop);
+	(void)loop;
+	(void)w;
+	(void)revents;
 
-	nl_cache_refill(ctx->ns, ctx->lcache);
-	nl_cache_foreach(ctx->lcache, reconf_link_iter, NULL);
-
-	nl_cache_refill(ctx->ns, ctx->rcache);
-	nl_cache_foreach(ctx->rcache, reconf_route_iter, NULL);
-	
-	if (ctx->acache) {
-		nl_cache_refill(ctx->ns, ctx->acache);
-		nl_cache_foreach(ctx->acache, reconf_addr_iter, NULL);
-	}
-	
-	if (ctx->ncache) {
-		nl_cache_refill(ctx->ns, ctx->ncache);
-		nl_cache_foreach(ctx->ncache, reconf_neigh_iter, NULL);
-	}
-	
-	if (ctx->rucache) {
-		nl_cache_refill(ctx->ns, ctx->rucache);
-		nl_cache_foreach(ctx->rucache, reconf_rule_iter, NULL);
+	/* 
+	 * With the new netlink manager, we don't use caches.
+	 * SIGHUP could be used to reload configuration in the future.
+	 */
+	if (verbose_mode) {
+		log_event("SIGHUP received");
 	}
 }
 
@@ -1118,86 +1088,19 @@ static void sigint_cb(struct ev_loop *loop, ev_signal *w, int revents)
 
 static int init(struct context *ctx)
 {
-	int err;
+	(void)ctx;  /* Context no longer used with new netlink manager */
 
-	nl_socket_set_buffer_size(ctx->ns, 320 << 10, 0);
+	/* 
+	 * With the new nlmon_nl_manager, we don't use caches.
+	 * Messages are processed directly via callbacks set up in the manager.
+	 * The old cache-based approach has been replaced with direct message processing.
+	 */
 
-	err = rtnl_link_alloc_cache(ctx->ns, AF_UNSPEC, &ctx->lcache);
-	if (err)
-		goto err_free_mngr;
-
-	err = rtnl_route_alloc_cache(ctx->ns, AF_UNSPEC, 0, &ctx->rcache);
-	if (err)
-		goto err_free_mngr;
-
-	err = nl_cache_mngr_add_cache(ctx->mngr, ctx->lcache,
-				      link_change_cb, ctx);
-	if (err)
-		goto err_free_mngr;
-
-	err = nl_cache_mngr_add_cache(ctx->mngr, ctx->rcache,
-				      route_change_cb, ctx);
-	if (err)
-		goto err_free_mngr;
-
-	/* Add address cache */
-	if (monitor_addr) {
-		err = rtnl_addr_alloc_cache(ctx->ns, &ctx->acache);
-		if (err) {
-			warnx("Failed to allocate address cache: %d", err);
-			ctx->acache = NULL;
-		} else {
-			err = nl_cache_mngr_add_cache(ctx->mngr, ctx->acache,
-						      addr_change_cb, ctx);
-			if (err) {
-				warnx("Failed to add address cache: %d", err);
-				nl_cache_free(ctx->acache);
-				ctx->acache = NULL;
-			}
-		}
-	}
-
-	/* Add neighbor cache */
-	if (monitor_neigh) {
-		err = rtnl_neigh_alloc_cache(ctx->ns, &ctx->ncache);
-		if (err) {
-			warnx("Failed to allocate neighbor cache: %d", err);
-			ctx->ncache = NULL;
-		} else {
-			err = nl_cache_mngr_add_cache(ctx->mngr, ctx->ncache,
-						      neigh_change_cb, ctx);
-			if (err) {
-				warnx("Failed to add neighbor cache: %d", err);
-				nl_cache_free(ctx->ncache);
-				ctx->ncache = NULL;
-			}
-		}
-	}
-
-	/* Add rule cache */
-	if (monitor_rules) {
-		err = rtnl_rule_alloc_cache(ctx->ns, AF_UNSPEC, &ctx->rucache);
-		if (err) {
-			warnx("Failed to allocate rule cache: %d", err);
-			ctx->rucache = NULL;
-		} else {
-			err = nl_cache_mngr_add_cache(ctx->mngr, ctx->rucache,
-						      rule_change_cb, ctx);
-			if (err) {
-				warnx("Failed to add rule cache: %d", err);
-				nl_cache_free(ctx->rucache);
-				ctx->rucache = NULL;
-			}
-		}
+	if (verbose_mode) {
+		log_event("Netlink manager initialized successfully");
 	}
 
 	return 0;
-
-err_free_mngr:
-	nl_cache_mngr_free(ctx->mngr);
-	warnx("init, nle:%d", err);
-
-	return 1;
 }
 
 static int usage(int rc)
@@ -1496,25 +1399,33 @@ int main(int argc, char *argv[])
 		}
 	}
 
-	ctx.ns = nl_socket_alloc();
-	assert(ctx.ns);
-	nl_socket_set_nonblocking(ctx.ns);
-
-	err = nl_cache_mngr_alloc(ctx.ns, NETLINK_ROUTE, NL_AUTO_PROVIDE, &ctx.mngr);
-	if (err)
+	/* Initialize new netlink manager */
+	g_nl_manager = nlmon_nl_manager_init();
+	if (!g_nl_manager) {
+		warnx("Failed to initialize netlink manager");
 		return 1;
+	}
 
-	fd = nl_cache_mngr_get_fd(ctx.mngr);
-	if (fd == -1) {
+	/* Enable NETLINK_ROUTE protocol */
+	err = nlmon_nl_enable_route(g_nl_manager);
+	if (err < 0) {
+		warnx("Failed to enable NETLINK_ROUTE: %d", err);
 	fail:
 		if (cli_mode)
 			cleanup_cli();
-		nl_cache_mngr_free(ctx.mngr);
-		nl_socket_free(ctx.ns);
+		if (g_nl_manager)
+			nlmon_nl_manager_destroy(g_nl_manager);
 		cleanup_memory_management();
 		return 1;
 	}
 
+	fd = nlmon_nl_get_route_fd(g_nl_manager);
+	if (fd == -1) {
+		warnx("Failed to get NETLINK_ROUTE file descriptor");
+		goto fail;
+	}
+
+	/* Legacy init function - may need updating */
 	if (init(&ctx))
 		goto fail;
 
@@ -1563,8 +1474,11 @@ int main(int argc, char *argv[])
 	/* Start event loop, remain there until ev_unloop() is called. */
 	ev_run(loop, 0);
 
-	nl_cache_mngr_free(ctx.mngr);
-	nl_socket_free(ctx.ns);
+	/* Cleanup new netlink manager */
+	if (g_nl_manager) {
+		nlmon_nl_manager_destroy(g_nl_manager);
+		g_nl_manager = NULL;
+	}
 	
 	/* Cleanup nlmon resources */
 	if (nlmon_sock >= 0)

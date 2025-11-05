@@ -20,6 +20,12 @@
 #include <netlink/genl/ctrl.h>
 
 #include "nlmon_netlink.h"
+#include "nlmon_nl_route.h"
+#include "nlmon_nl_genl.h"
+
+/* Forward declarations of message handlers */
+extern int nlmon_route_msg_handler(struct nl_msg *msg, void *arg);
+extern int nlmon_genl_msg_handler(struct nl_msg *msg, void *arg);
 
 /**
  * Initialize netlink manager
@@ -199,7 +205,8 @@ int nlmon_nl_enable_route(struct nlmon_nl_manager *mgr)
 		return -ENOMEM;
 	}
 	
-	/* TODO: Set up callbacks in later tasks */
+	/* Set up route message callback handler */
+	nl_cb_set(mgr->route_cb, NL_CB_VALID, NL_CB_CUSTOM, nlmon_route_msg_handler, mgr);
 	
 	mgr->enable_route = 1;
 	
@@ -269,7 +276,8 @@ int nlmon_nl_enable_generic(struct nlmon_nl_manager *mgr)
 		return -ENOMEM;
 	}
 	
-	/* TODO: Set up callbacks in later tasks */
+	/* Set up generic netlink message callback handler */
+	nl_cb_set(mgr->genl_cb, NL_CB_VALID, NL_CB_CUSTOM, nlmon_genl_msg_handler, mgr);
 	
 	mgr->enable_genl = 1;
 	

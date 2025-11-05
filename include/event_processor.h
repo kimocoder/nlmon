@@ -16,6 +16,12 @@ struct ring_buffer;
 struct thread_pool;
 struct rate_limiter_map;
 
+/* Forward declarations for netlink data structures */
+struct nlmon_link_info;
+struct nlmon_addr_info;
+struct nlmon_route_info;
+struct nlmon_neigh_info;
+
 /* Event structure for processing */
 struct nlmon_event {
 	uint64_t timestamp;
@@ -26,6 +32,34 @@ struct nlmon_event {
 	void *data;           /* Event-specific data */
 	size_t data_size;
 	void *user_data;      /* User context */
+	
+	/* Netlink-specific fields */
+	struct {
+		int protocol;                /* NETLINK_ROUTE, NETLINK_GENERIC, etc. */
+		uint16_t msg_type;           /* RTM_NEWLINK, etc. */
+		uint16_t msg_flags;          /* NLM_F_* flags */
+		uint32_t seq;                /* Sequence number */
+		uint32_t pid;                /* Port ID */
+		
+		/* Generic netlink specific */
+		uint8_t genl_cmd;
+		uint8_t genl_version;
+		uint16_t genl_family_id;
+		char genl_family_name[32];
+		
+		/* Parsed attributes (protocol-specific) */
+		union {
+			struct nlmon_link_info *link;
+			struct nlmon_addr_info *addr;
+			struct nlmon_route_info *route;
+			struct nlmon_neigh_info *neigh;
+			void *generic;
+		} data;
+	} netlink;
+	
+	/* Raw message (optional, for debugging) */
+	struct nlmsghdr *raw_msg;
+	size_t raw_msg_len;
 };
 
 /* Event handler callback */

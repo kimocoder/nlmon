@@ -24,6 +24,8 @@ Features
 * **NEW:** Verbose mode with detailed netlink message inspection
 * **NEW:** Message type filtering for focused monitoring
 * **NEW:** Support for multiple netlink protocol families
+* **NEW:** Qualcomm WMI (Wireless Management Interface) command monitoring
+* **NEW:** QCA vendor command decoding for WiFi driver debugging
 
 
 Building
@@ -90,6 +92,26 @@ Filter by specific message type (e.g., only link changes):
 Verbose mode with detailed message information:
 
     ./nlmon -V
+
+**NEW: WMI (Wireless Management Interface) Monitoring**
+
+Monitor Qualcomm WMI commands from device logs:
+
+    sudo ./nlmon --wmi /var/log/kern.log
+
+Monitor WMI commands in real-time (follow mode):
+
+    sudo ./nlmon --wmi follow:/var/log/kern.log
+
+Combine WMI monitoring with netlink monitoring:
+
+    sudo ./nlmon -g --wmi /var/log/kern.log
+
+Filter specific WMI commands:
+
+    sudo ./nlmon --wmi /var/log/kern.log --filter "wmi.cmd=REQUEST_LINK_STATS"
+
+For detailed WMI monitoring documentation, see [docs/WMI_MONITORING.md](docs/WMI_MONITORING.md)
 
 
 CLI Mode Commands
@@ -175,6 +197,13 @@ Monitored NETLINK Features
   - Supports writing to PCAP format for Wireshark analysis
   - Message type filtering available
   - Detailed message inspection in verbose mode
+
+* **WMI MONITORING** - When using --wmi option (Qualcomm WiFi chipsets)
+  - Monitor WMI (Wireless Management Interface) commands from device logs
+  - Decode WMI command IDs and statistics types
+  - Track firmware-level WiFi operations
+  - Correlate with nl80211 vendor commands
+  - Support for file and stdin input with follow mode
 
 
 nlmon Kernel Module Details
@@ -265,7 +294,18 @@ Recent enhancements include:
    - Debugging scenarios and troubleshooting
    - Integration examples (systemd, Docker)
 
+6. **Qualcomm WMI Monitoring**
+   - Monitor WMI commands from device logs
+   - Decode WMI command IDs and statistics types
+   - Support for multiple log formats
+   - Real-time follow mode (like tail -f)
+   - Integration with existing filtering and export features
+
 See [EXAMPLES.md](EXAMPLES.md) for detailed usage examples and scenarios.
+
+See [docs/WMI_MONITORING.md](docs/WMI_MONITORING.md) for comprehensive WMI monitoring guide.
+
+See [docs/QCA_VENDOR_SUPPORT.md](docs/QCA_VENDOR_SUPPORT.md) for QCA vendor command support.
 
 
 [finit]:          https://github.com/troglobit/finit
