@@ -1,0 +1,22 @@
+# Makefile for qca-ctl - QCA WiFi Driver Control Tool
+
+CC = gcc
+CFLAGS = -Wall -Wextra -O2 -g
+LDFLAGS = -lnl-3 -lnl-genl-3
+
+# Try to find libnl include path
+NL_CFLAGS = $(shell pkg-config --cflags libnl-3.0 libnl-genl-3.0 2>/dev/null || echo "-I/usr/include/libnl3")
+NL_LDFLAGS = $(shell pkg-config --libs libnl-3.0 libnl-genl-3.0 2>/dev/null || echo "-lnl-3 -lnl-genl-3")
+
+all: qca-ctl
+
+qca-ctl: qca-ctl.c
+	$(CC) $(CFLAGS) $(NL_CFLAGS) -o $@ $< $(NL_LDFLAGS)
+
+clean:
+	rm -f qca-ctl
+
+install: qca-ctl
+	install -D -m 755 qca-ctl $(DESTDIR)/usr/local/bin/qca-ctl
+
+.PHONY: all clean install

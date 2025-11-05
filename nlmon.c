@@ -97,6 +97,9 @@ int nlmon_nl_process_nf(struct nlmon_nl_manager *mgr);
 #include "wmi_log_reader.h"
 #include "wmi_event_bridge.h"
 
+/* QCA driver control integration */
+#include "qca_nlmon_integration.h"
+
 /* CLI mode globals */
 static int cli_mode = 0;
 static WINDOW *main_win = NULL;
@@ -161,6 +164,12 @@ static int wmi_follow_mode = 0;
 static char *wmi_filter_expr = NULL;
 static pthread_t wmi_thread;
 static int wmi_thread_started = 0;
+
+/* QCA driver control options */
+static int enable_qca_control = 0;
+static char *qca_interface = NULL;
+static int qca_auto_roaming = 0;
+static int qca_stats_on_roam = 0;
 
 #define MAX_NETLINK_PACKET_SIZE 65536
 
@@ -440,6 +449,11 @@ static void netlink_manager_event_cb(struct nlmon_event *evt, void *user_data)
 			         evt->netlink.genl_version);
 			log_event(buf);
 		}
+	}
+	
+	/* Process QCA integration if enabled */
+	if (enable_qca_control && evt->netlink.protocol == NETLINK_GENERIC) {
+		qca_nlmon_process_nl80211_event(evt);
 	}
 	
 	/* Handle netlink events from the new manager */
@@ -1017,6 +1031,11 @@ static void cleanup_cli(void)
 /* Cleanup memory management and resource tracking */
 static void cleanup_memory_management(void)
 {
+	/* Cleanup QCA control integration */
+	if (enable_qca_control) {
+		qca_nlmon_cleanup();
+	}
+	
 	/* Cleanup WMI monitoring */
 	if (enable_wmi) {
 		if (wmi_thread_started) {
@@ -1232,7 +1251,7 @@ static int init(struct context *ctx)
 
 static int usage(int rc)
 {
-	printf("Usage: nlmon [-h?vciauVD] [-m device] [-p file] [-f type] [-g] [-A] [-w source] [-W expr]\n"
+	printf("Usage: nlmon [-h?vciauVD] [-m device] [-p file] [-f type] [-g] [-A] [-w source] [-W expr] [-q iface] [-Q] [-S]\n"
 	       "\n"
 	       "Options:\n"
 	       "  -h    This help text\n"
@@ -1250,6 +1269,9 @@ static int usage(int rc)
 	       "  -A    Monitor all netlink protocols (ROUTE, GENERIC, SOCK_DIAG, NETFILTER)\n"
 	       "  -w    Enable WMI log monitoring from <source> (file path, '-' for stdin, or 'follow:path')\n"
 	       "  -W    Filter WMI events with expression (e.g., 'wmi.cmd=REQUEST_STATS')\n"
+	       "  -q    Enable QCA driver control for <iface> (e.g., -q wlan0)\n"
+	       "  -Q    Enable automatic roaming adjustment (requires -q)\n"
+	       "  -S    Collect stats on roam events (requires -q)\n"
 	       "\n"
 	       "nlmon Kernel Module Support:\n"
 	       "  The -m option enables binding to a virtual nlmon network device to capture\n"
@@ -1271,6 +1293,23 @@ static int usage(int rc)
 	       "  Example: nlmon -w follow:/var/log/wlan.log  # Follow mode (like tail -f)\n"
 	       "  Example: nlmon -g -w /var/log/wlan.log      # Combine with netlink monitoring\n"
 	       "  Example: nlmon -w /var/log/wlan.log -W 'wmi.cmd=REQUEST_LINK_STATS'\n"
+	       "\n"
+	       "QCA Driver Control:\n"
+	       "  The -q option enables QCA vendor command integration with nl80211 monitoring.\n"
+	       "  Automatically responds to WiFi events with appropriate vendor commands.\n"
+	       "  \n"
+	       "  Example: nlmon -g -q wlan0                  # Monitor and control wlan0\n"
+	       "  Example: nlmon -g -q wlan0 -Q               # Enable auto roaming adjustment\n"
+	       "  Example: nlmon -g -q wlan0 -Q -S            # Auto roaming + stats collection\n"
+	       "  Example: nlmon -g -V -q wlan0 -Q            # Verbose mode with QCA control\n"
+	       "  \n"
+	       "  Auto roaming (-Q) adjusts RSSI thresholds based on connection events:\n"
+	       "    - After disconnect: Aggressive roaming (RSSI -75 dBm)\n"
+	       "    - After connect: Normal roaming (RSSI -70 dBm)\n"
+	       "    - After roam: Normal roaming (RSSI -70 dBm)\n"
+	       "  \n"
+	       "  Stats collection (-S) automatically collects link layer statistics\n"
+	       "  when roaming events occur.\n"
 	       "\n"
 	       "Common Message Types:\n"
 	       "  RTM_NEWLINK=16, RTM_DELLINK=17, RTM_NEWADDR=20, RTM_DELADDR=21\n"
@@ -1322,7 +1361,7 @@ int main(int argc, char *argv[])
 		warnx("Failed to initialize signal handler");
 	}
 
-	while ((c = getopt(argc, argv, "h?vciauVDm:p:f:gAw:W:")) != EOF) {
+	while ((c = getopt(argc, argv, "h?vciauVDm:p:f:gAw:W:q:QS")) != EOF) {
 		switch (c) {
 		case 'h':
 		case '?':
@@ -1409,6 +1448,21 @@ int main(int argc, char *argv[])
 		case 'W':
 			wmi_filter_expr = optarg;
 			break;
+			
+		case 'q':
+			enable_qca_control = 1;
+			qca_interface = optarg;
+			/* QCA control requires generic netlink monitoring */
+			show_generic_netlink = 1;
+			break;
+			
+		case 'Q':
+			qca_auto_roaming = 1;
+			break;
+			
+		case 'S':
+			qca_stats_on_roam = 1;
+			break;
 
 		default:
 			return usage(1);
@@ -1424,6 +1478,12 @@ int main(int argc, char *argv[])
 	/* Validate WMI options */
 	if (wmi_filter_expr && !enable_wmi) {
 		warnx("WMI filter (-W) requires WMI monitoring (-w)");
+		return usage(1);
+	}
+	
+	/* Validate QCA options */
+	if ((qca_auto_roaming || qca_stats_on_roam) && !enable_qca_control) {
+		warnx("QCA options (-Q, -S) require QCA control (-q)");
 		return usage(1);
 	}
 	
@@ -1549,6 +1609,37 @@ int main(int argc, char *argv[])
 					enable_wmi = 0;
 				} else {
 					wmi_thread_started = 1;
+				}
+			}
+		}
+	}
+
+	/* Initialize QCA driver control if requested */
+	if (enable_qca_control) {
+		if (qca_nlmon_init(qca_interface, verbose_mode) < 0) {
+			warnx("Failed to initialize QCA driver control");
+			enable_qca_control = 0;
+		} else {
+			if (verbose_mode) {
+				char msg[256];
+				snprintf(msg, sizeof(msg), "QCA driver control enabled for %s", qca_interface);
+				log_event(msg);
+			}
+			
+			/* Configure auto roaming if enabled */
+			if (qca_auto_roaming) {
+				qca_nlmon_enable_auto_roaming(1);
+				qca_nlmon_set_roaming_thresholds(75, 70, 65);
+				if (verbose_mode) {
+					log_event("Auto roaming adjustment enabled");
+				}
+			}
+			
+			/* Configure stats collection if enabled */
+			if (qca_stats_on_roam) {
+				qca_nlmon_enable_stats_on_roam(1);
+				if (verbose_mode) {
+					log_event("Stats collection on roam enabled");
 				}
 			}
 		}
