@@ -15,6 +15,17 @@ ENABLE_WEB       ?= 1
 ENABLE_PLUGINS   ?= 1
 ENABLE_EXPORT    ?= 1
 
+# libnl-tiny integration
+LIBNL_DIR := libnl
+LIBNL_LIB := $(LIBNL_DIR)/libnl-tiny.a
+LIBNL_SRCS := $(LIBNL_DIR)/attr.c $(LIBNL_DIR)/cache.c $(LIBNL_DIR)/cache_mngt.c \
+              $(LIBNL_DIR)/error.c $(LIBNL_DIR)/genl.c $(LIBNL_DIR)/genl_ctrl.c \
+              $(LIBNL_DIR)/genl_family.c $(LIBNL_DIR)/genl_mngt.c $(LIBNL_DIR)/handlers.c \
+              $(LIBNL_DIR)/msg.c $(LIBNL_DIR)/nl.c $(LIBNL_DIR)/object.c \
+              $(LIBNL_DIR)/socket.c $(LIBNL_DIR)/unl.c
+LIBNL_OBJS := $(LIBNL_SRCS:.c=.o)
+LIBNL_INCLUDES := -I$(LIBNL_DIR)/include
+
 # Core source files
 CORE_SRCS := nlmon.c
 CORE_OBJS := $(CORE_SRCS:.c=.o)
@@ -23,7 +34,7 @@ CORE_OBJS := $(CORE_SRCS:.c=.o)
 CONFIG_SRCS   := src/config/config.c src/config/yaml_parser.c src/config/hot_reload.c
 CORE_ENGINE_SRCS := src/core/ring_buffer.c src/core/thread_pool.c src/core/rate_limiter.c src/core/event_processor.c
 MEMORY_MGMT_SRCS := src/core/object_pool.c src/core/event_pool.c src/core/filter_pool.c src/core/resource_tracker.c src/core/signal_handler.c src/core/memory_tracker.c src/core/performance_profiler.c
-NETLINK_SRCS := src/core/netlink_multi_protocol.c src/core/namespace_tracker.c src/core/interface_detector.c src/core/qca_vendor.c src/core/qca_wmi.c src/core/wmi_log_reader.c src/core/wmi_event_bridge.c src/core/wmi_error.c
+NETLINK_SRCS := src/core/netlink_multi_protocol.c src/core/nlmon_netlink.c src/core/namespace_tracker.c src/core/interface_detector.c src/core/qca_vendor.c src/core/qca_wmi.c src/core/wmi_log_reader.c src/core/wmi_event_bridge.c src/core/wmi_error.c
 FILTER_SRCS := src/core/filter_parser.c src/core/filter_compiler.c src/core/filter_eval.c src/core/filter_manager.c
 CORRELATION_SRCS := src/core/time_window.c src/core/correlation_engine.c src/core/pattern_detector.c src/core/anomaly_detector.c
 SECURITY_SRCS := src/core/security_detector.c src/web/access_control.c
@@ -46,7 +57,8 @@ LDLIBS := $(shell pkg-config --libs $(CORE_LIBS))
 LDLIBS += -lev -lncursesw -lpthread -lm -lcurl
 CFLAGS := $(shell pkg-config --cflags $(CORE_LIBS))
 CFLAGS += -g -Og -W -Wall -Wextra -Wno-unused-parameter
-CFLAGS += -Iinclude
+# Prioritize libnl-tiny includes over system libnl
+CFLAGS += $(LIBNL_INCLUDES) -Iinclude
 
 # Check for optional dependencies and set feature flags
 ifeq ($(ENABLE_CONFIG),1)
@@ -105,9 +117,21 @@ endif
 # Build targets
 .PHONY: all clean distclean install uninstall check-deps core plugins web help tools
 .PHONY: unit-tests run-unit-tests integration-tests benchmarks test-all
-.PHONY: wmi-tests run-wmi-tests
+.PHONY: wmi-tests run-wmi-tests libnl-tiny
 
-all: check-deps $(EXEC)
+all: check-deps $(LIBNL_LIB) $(EXEC)
+
+# libnl-tiny static library
+$(LIBNL_LIB): $(LIBNL_OBJS)
+	@echo "  AR      $@"
+	@ar rcs $@ $^
+
+$(LIBNL_DIR)/%.o: $(LIBNL_DIR)/%.c
+	@echo "  CC      $@"
+	@$(CC) -g -Og -W -Wall -Wextra -Wno-unused-parameter -I$(LIBNL_DIR)/include -c -o $@ $<
+
+libnl-tiny: $(LIBNL_LIB)
+	@echo "libnl-tiny library built"
 
 tools: audit_verify
 
@@ -172,7 +196,7 @@ run-unit-tests: unit-tests
 	@./tests/run_unit_tests.sh
 
 # Integration test targets
-INTEGRATION_TEST_SRCS := tests/integration/test_e2e_processing.c tests/integration/test_plugin_loading.c tests/integration/test_config_loading.c
+INTEGRATION_TEST_SRCS := tests/integration/test_e2e_processing.c tests/integration/test_plugin_loading.c tests/integration/test_config_loading.c tests/integration/test_wmi_integration.c
 INTEGRATION_TEST_BINS := $(INTEGRATION_TEST_SRCS:tests/integration/%.c=test_integration_%)
 
 tests/integration/netlink_simulator.o: tests/integration/netlink_simulator.c
@@ -191,11 +215,15 @@ test_integration_config_loading: tests/integration/test_config_loading.c $(CONFI
 	@echo "  CC      $@"
 	@$(CC) $(CFLAGS) -Itests/unit -o $@ $^ $(shell pkg-config --libs yaml-0.1 2>/dev/null || echo "")
 
+test_integration_wmi_integration: tests/integration/test_wmi_integration.c src/core/wmi_log_reader.o src/core/wmi_event_bridge.o src/core/qca_wmi.o src/core/wmi_error.o src/core/event_processor.o src/core/ring_buffer.o src/core/thread_pool.o src/core/rate_limiter.o src/core/object_pool.o
+	@echo "  CC      $@"
+	@$(CC) $(CFLAGS) -Itests/unit -o $@ $^ -lpthread
+
 integration-tests: $(INTEGRATION_TEST_BINS)
 	@echo "Integration tests built successfully"
 
 # Benchmark targets
-BENCHMARK_SRCS := tests/benchmarks/bench_event_processing.c tests/benchmarks/bench_filter_evaluation.c tests/benchmarks/bench_memory_usage.c
+BENCHMARK_SRCS := tests/benchmarks/bench_event_processing.c tests/benchmarks/bench_filter_evaluation.c tests/benchmarks/bench_memory_usage.c tests/benchmarks/bench_wmi_parsing.c
 BENCHMARK_BINS := $(BENCHMARK_SRCS:tests/benchmarks/%.c=bench_%)
 
 bench_event_processing: tests/benchmarks/bench_event_processing.c $(CORE_ENGINE_SRCS:.c=.o) $(MEMORY_MGMT_SRCS:.c=.o)
@@ -207,6 +235,10 @@ bench_filter_evaluation: tests/benchmarks/bench_filter_evaluation.c $(FILTER_SRC
 	@$(CC) $(CFLAGS) -Itests/benchmarks -o $@ $^ -lpthread
 
 bench_memory_usage: tests/benchmarks/bench_memory_usage.c $(MEMORY_MGMT_SRCS:.c=.o) $(CORE_ENGINE_SRCS:.c=.o)
+	@echo "  CC      $@"
+	@$(CC) $(CFLAGS) -Itests/benchmarks -o $@ $^ -lpthread
+
+bench_wmi_parsing: tests/benchmarks/bench_wmi_parsing.c src/core/qca_wmi.o src/core/wmi_error.o src/core/wmi_log_reader.o src/core/wmi_event_bridge.o src/core/event_processor.o src/core/ring_buffer.o src/core/thread_pool.o src/core/rate_limiter.o src/core/object_pool.o
 	@echo "  CC      $@"
 	@$(CC) $(CFLAGS) -Itests/benchmarks -o $@ $^ -lpthread
 
@@ -255,14 +287,19 @@ run-wmi-tests: wmi-tests
 	done
 	@echo "All WMI tests passed!"
 
+# libnl-tiny integration test
+test_libnl_integration: test_libnl_integration.c $(LIBNL_LIB)
+	@echo "  CC      $@"
+	@$(CC) $(CFLAGS) -o $@ $< $(LIBNL_LIB)
+
 # Combined test target
 test-all: run-unit-tests integration-tests run-benchmarks run-wmi-tests
 	@echo ""
 	@echo "All tests completed successfully!"
 
-$(EXEC): $(ALL_OBJS)
+$(EXEC): $(ALL_OBJS) $(LIBNL_LIB)
 	@echo "  LD      $@"
-	@$(CC) -o $@ $^ $(LDLIBS)
+	@$(CC) -o $@ $(ALL_OBJS) $(LIBNL_LIB) $(LDLIBS)
 
 %.o: %.c
 	@echo "  CC      $@"
@@ -330,13 +367,15 @@ clean:
 	$(RM) src/core/*.o src/config/*.o src/storage/*.o
 	$(RM) src/export/*.o src/plugins/*.o src/web/*.o src/cli/*.o
 	$(RM) $(UNIT_TEST_BINS) $(INTEGRATION_TEST_BINS) $(BENCHMARK_BINS) $(WMI_TEST_BINS)
-	$(RM) test_stability test_security test_alert_system audit_verify
+	$(RM) test_stability test_security test_alert_system audit_verify test_libnl_integration
 	$(RM) tests/integration/*.o
+	$(RM) $(LIBNL_OBJS) $(LIBNL_LIB)
 
 distclean: clean
 	@echo "Cleaning all generated files..."
 	$(RM) *.o *~ *.bak
 	$(RM) src/*/*.o src/*/*~ src/*/*.bak
+	$(RM) $(LIBNL_DIR)/*.o
 
 # Test targets
 test_cli: test_cli.c $(CLI_OBJS)
