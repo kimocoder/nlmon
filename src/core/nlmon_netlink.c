@@ -210,6 +210,9 @@ int nlmon_nl_enable_route(struct nlmon_nl_manager *mgr)
 		return -ENOMEM;
 	}
 	
+	/* Disable sequence number checking in callback for asynchronous events */
+	nl_cb_set(mgr->route_cb, NL_CB_SEQ_CHECK, NL_CB_CUSTOM, NULL, NULL);
+	
 	/* Set up route message callback handler */
 	nl_cb_set(mgr->route_cb, NL_CB_VALID, NL_CB_CUSTOM, nlmon_route_msg_handler, mgr);
 	
